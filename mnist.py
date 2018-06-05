@@ -49,10 +49,10 @@ def run():
             Instantiation of the ModularContext class
         """
 
-        modules = modular.create_dense_modules(inputs, module_count=5, units=64) 
+        modules = modular.create_dense_modules(inputs, module_count=10, units=32) 
         hidden = modular.masked_layer(inputs, modules, context=context) #[sample * B x units]
 
-        modules = modular.create_dense_modules(hidden, module_count=5, units=10)
+        modules = modular.create_dense_modules(hidden, module_count=10, units=10)
         logits = modular.masked_layer(hidden, modules, context=context)
 
         # modules = modular.create_dense_modules(logits, module_count=10, units=10)
