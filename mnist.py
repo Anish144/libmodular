@@ -5,7 +5,6 @@ import numpy as np
 import libmodular as modular
 import observations
 from tqdm import tqdm
-from libmodular import decorators
 
 def generator(arrays, batch_size):
     """Generate batches, one with respect to each array's first axis."""

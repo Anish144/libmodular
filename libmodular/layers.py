@@ -3,7 +3,6 @@ from tensorflow.contrib import distributions as tfd
 
 from libmodular.modular import ModulePool, ModularContext, ModularMode, ModularLayerAttributes
 from libmodular.modular import run_modules, run_masked_modules, e_step, m_step, evaluation
-from libmodular.decorators import define_scope_fnc
 
 
 def create_dense_modules(inputs_or_shape, module_count: int, units: int = None, activation=None):
