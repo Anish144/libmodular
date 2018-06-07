@@ -57,6 +57,12 @@ class ModularContext:
             return tf.scatter_update(layer.best_selection, self.data_indices, new_best_selection)
         return tf.group(*(update(layer) for layer in self.layers))
 
+    def get_controller(self):
+        """
+        Returns the controller for visualisation purposes
+        """
+        return [layer.controller for layer in self.layers]
+
 
 def run_modules(inputs, selection, module_fnc, output_shape):
 

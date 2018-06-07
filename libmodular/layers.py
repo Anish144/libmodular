@@ -51,7 +51,7 @@ def modular_layer(inputs, modules: ModulePool, parallel_count: int, context: Mod
 
         initializer = tf.random_uniform_initializer(maxval=modules.module_count, dtype=tf.int32)
         shape = [context.dataset_size, parallel_count]
-        best_selection_persistent = tf.get_variable('best_selection', shape, tf.int32, initializer)
+        best_selection_persistent = tf.get_variable('best_selection', shape, tf.int32, initializer) #Different for each layer
 
         if context.mode == ModularMode.E_STEP:
             #Use gather to get the selection of the batch indices of the data [1...32] then [32...64]
@@ -91,9 +91,13 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext):
 
         ctrl_bern = tfd.Bernoulli(logits) #Create controller with logits
 
-        initializer = tf.ones_initializer(dtype=tf.int32)
+        # shape = [context.dataset_size, modules.module_count]
+        # initializer = tf.ones_initializer(dtype=tf.int32)
+        # best_selection_persistent = tf.get_variable('best_selection', shape, tf.int32, initializer)
+
+        initializer = tf.random_uniform_initializer(maxval=2, dtype=tf.int32)
         shape = [context.dataset_size, modules.module_count]
-        best_selection_persistent = tf.get_variable('best_selection', shape, tf.int32, initializer)
+        best_selection_persistent = tf.get_variable('best_selection', shape, tf.int32, initializer) #Different for each layer
 
         if context.mode == ModularMode.E_STEP:
             best_selection = tf.gather(best_selection_persistent, context.data_indices)[tf.newaxis]
@@ -110,7 +114,7 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext):
 
         attrs = ModularLayerAttributes(selection, best_selection_persistent, ctrl_bern)
         context.layers.append(attrs)
-        return run_masked_modules(inputs, selection, modules.module_fnc, modules.output_shape)
+        return run_masked_modules(inputs, selection, modules.module_fnc, modules.output_shape), logits
 
 
 def modularize_target(target, context: ModularContext):
