@@ -45,23 +45,23 @@ def run():
     labels = tf.placeholder(tf.int32, [None], 'labels')
     data_indices = tf.placeholder(tf.int32, [None], 'data_indices') #Labels the batch...
 
-    def network(context: modular.ModularContext, masked_bernoulli=False):
+    def network(context: modular.ModularContext, dataset_size=dataset_size, masked_bernoulli=False,):
         """
         Args:
             Instantiation of the ModularContext class
         """
         if masked_bernoulli:
             modules = modular.create_dense_modules(inputs, module_count=3, units=128, activation=tf.nn.relu) 
-            hidden = modular.masked_layer(inputs, modules, context=context) #[sample * B x units]
+            hidden = modular.masked_layer(inputs, modules, context=context, data_size=dataset_size) #[sample * B x units]
 
             modules = modular.create_dense_modules(hidden, module_count=3, units=64, activation=tf.nn.relu) 
-            hidden = modular.masked_layer(hidden, modules, context=context) #[sample * B x units]
+            hidden = modular.masked_layer(hidden, modules, context=context, data_size=dataset_size) #[sample * B x units]
 
             modules = modular.create_dense_modules(hidden, module_count=3, units=32, activation=tf.nn.relu) 
-            hidden = modular.masked_layer(hidden, modules, context=context) #[sample * B x units]
+            hidden = modular.masked_layer(hidden, modules, context=context, data_size=dataset_size) #[sample * B x units]
 
             modules = modular.create_dense_modules(hidden, module_count=3, units=10) 
-            logits = modular.masked_layer(hidden, modules, context=context) #[sample * B x units]
+            logits = modular.masked_layer(hidden, modules, context=context, data_size=dataset_size) #[sample * B x units]
         else:
             modules = modular.create_dense_modules(inputs, module_count=3, units=128, activation=tf.nn.relu) 
             hidden = modular.modular_layer(inputs, modules, parallel_count=1, context=context) #[sample * B x units]
@@ -89,7 +89,7 @@ def run():
 
     #make template: create function and partially evaluate it, create variables the first time then
     #reuse them, better than using autoreuse=True in the scope
-    template = tf.make_template('network', network, masked_bernoulli=True)
+    template = tf.make_template('network', network, masked_bernoulli=True, dataset_size=dataset_size)
     optimizer = tf.train.AdamOptimizer()
     e_step, m_step, eval = modular.modularize(template, optimizer, dataset_size,
                                               data_indices, sample_size=10)

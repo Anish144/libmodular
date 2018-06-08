@@ -1,5 +1,6 @@
 import tensorflow as tf
 from tensorflow.contrib import distributions as tfd
+import numpy as np
 
 from libmodular.modular import ModulePool, ModularContext, ModularMode, ModularLayerAttributes
 from libmodular.modular import run_modules, run_masked_modules, e_step, m_step, evaluation
@@ -74,7 +75,7 @@ def modular_layer(inputs, modules: ModulePool, parallel_count: int, context: Mod
         return run_modules(inputs, selection, modules.module_fnc, modules.output_shape)
 
 
-def masked_layer(inputs, modules: ModulePool, context: ModularContext):
+def masked_layer(inputs, modules: ModulePool, context: ModularContext, data_size):
     """
     Function that takes in input and modules and return the selection based on a Bernoulli mask
     Args:
@@ -92,13 +93,15 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext):
 
         ctrl_bern = tfd.Bernoulli(logits) #Create controller with logits
 
+        #Initialisation of variables to 1
         # shape = [context.dataset_size, modules.module_count]
         # initializer = tf.ones_initializer(dtype=tf.int32)
         # best_selection_persistent = tf.get_variable('best_selection', shape, tf.int32, initializer)
-
-        initializer = tf.random_uniform_initializer(maxval=2, dtype=tf.int32)
+        
         shape = [context.dataset_size, modules.module_count]
-        best_selection_persistent = tf.get_variable('best_selection', shape, tf.int32, initializer) #Different for each layer
+        initial = np.random.binomial(1, p=0.3, size=data_size)
+        initializer = tf.constant_initializer(initial)
+        best_selection_persistent = tf.get_variable('best_selection', shape=shape,dtype=tf.int32, initializer=initializer) #Different for each layer
 
         if context.mode == ModularMode.E_STEP:
             best_selection = tf.gather(best_selection_persistent, context.data_indices)[tf.newaxis]
