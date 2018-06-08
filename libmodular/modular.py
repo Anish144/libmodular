@@ -33,7 +33,7 @@ class ModularContext:
     def batch_selection_entropy(self):
         def layer_entropy(layer):
             probs = tf.reduce_mean(layer.controller.probs, axis=0) #[parallel x module]
-            reduce_prob = tf.reduce_sum(-tf.reduce_sum(probs * tf.log(probs + 1e-30), axis=-1))
+            reduce_prob = -tf.reduce_sum(probs * tf.log(probs + 1e-30), axis=-1)
             return reduce_prob
         hb = tf.reduce_mean([layer_entropy(layer) for layer in self.layers])
         return hb
