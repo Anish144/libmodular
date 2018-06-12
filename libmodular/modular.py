@@ -140,8 +140,8 @@ def m_step(template, optimizer, dataset_size, data_indices):
     return optimizer.minimize(ctrl_objective + module_objective)
 
 
-def evaluation(template):
-    context = ModularContext(ModularMode.EVALUATION)
+def evaluation(template, data_indices):
+    context = ModularContext(ModularMode.EVALUATION, data_indices)
     return template(context)
 
 def get_unique_modules(selection):

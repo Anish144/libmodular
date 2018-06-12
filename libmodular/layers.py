@@ -72,10 +72,10 @@ def modular_layer(inputs, modules: ModulePool, parallel_count: int, context: Mod
         attrs = ModularLayerAttributes(selection, best_selection_persistent, ctrl)
         context.layers.append(attrs)
 
-        return run_modules(inputs, selection, modules.module_fnc, modules.output_shape)
+        return run_modules(inputs, selection, modules.module_fnc, modules.output_shape), logits
 
 
-def masked_layer(inputs, modules: ModulePool, context: ModularContext, data_size):
+def masked_layer(inputs, modules: ModulePool, context: ModularContext):
     """
     Function that takes in input and modules and return the selection based on a Bernoulli mask
     Args:
@@ -95,13 +95,12 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext, data_size
 
         #Initialisation of variables to 1
         # shape = [context.dataset_size, modules.module_count]
-        # initializer = tf.ones_initializer(dtype=tf.int32)
+        initializer = tf.zeros_initializer(dtype=tf.int32)
         # best_selection_persistent = tf.get_variable('best_selection', shape, tf.int32, initializer)
         
         shape = [context.dataset_size, modules.module_count]
-        initial = np.random.binomial(1, p=0.3, size=data_size)
-        initializer = tf.constant_initializer(initial)
-        best_selection_persistent = tf.get_variable('best_selection', shape=shape,dtype=tf.int32, initializer=initializer) #Different for each layer
+        # initializer = tf.constant_initializer()
+        best_selection_persistent = tf.get_variable('best_selection', shape=shape, dtype=tf.int32, initializer=initializer) #Different for each layer
 
         if context.mode == ModularMode.E_STEP:
             best_selection = tf.gather(best_selection_persistent, context.data_indices)[tf.newaxis]
@@ -118,7 +117,7 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext, data_size
 
         attrs = ModularLayerAttributes(selection, best_selection_persistent, ctrl_bern)
         context.layers.append(attrs)
-        return run_masked_modules(inputs, selection, modules.module_fnc, modules.output_shape)
+        return run_masked_modules(inputs, selection, modules.module_fnc, modules.output_shape), logits
 
 
 def modularize_target(target, context: ModularContext):
@@ -131,5 +130,5 @@ def modularize_target(target, context: ModularContext):
 def modularize(template, optimizer, dataset_size, data_indices, sample_size):
     e = e_step(template, sample_size, dataset_size, data_indices)
     m = m_step(template, optimizer, dataset_size, data_indices)
-    ev = evaluation(template)
+    ev = evaluation(template, data_indices)
     return e, m, ev
