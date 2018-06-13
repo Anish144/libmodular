@@ -5,6 +5,7 @@ import libmodular.tensor_utils as tensor_utils
 
 import tensorflow as tf
 
+M_STEP_SUMMARIES = 'M_STEP_SUMMARIES'
 ModularMode = Enum('ModularMode', 'E_STEP M_STEP EVALUATION')
 ModularLayerAttributes = namedtuple('ModularLayerAttributes', ['selection', 'best_selection', 'controller'])
 ModulePool = namedtuple('ModulePool', ['module_count', 'module_fnc', 'output_shape'])
@@ -67,7 +68,12 @@ class ModularContext:
 def run_modules(inputs, selection, module_fnc, output_shape):
 
     batch_size = tf.shape(inputs)[0]
-    output_shape = [batch_size] + output_shape
+    if output_shape is not None:
+        output_shape = [batch_size] + output_shape
+    else:
+        # This is the only way I am aware of to get the output shape easily
+        dummy = module_fnc(inputs, 0)
+        output_shape = [batch_size] + dummy.shape[1:].as_list()   
     #Used modules is just a list of modules that we are using
     used_modules, _ = tf.unique(tf.reshape(selection, (-1,))) #Size = No. of Modules
 
@@ -112,32 +118,36 @@ def run_masked_modules(inputs, selection, module_fnc, output_shape):
 
 
 def e_step(template, sample_size, dataset_size, data_indices):
-    #Initialise Modular Context here
     context = ModularContext(ModularMode.E_STEP, data_indices, dataset_size, sample_size)
 
-    #Get log likelihood from the network function
-    #log likelihood and selection log prob differ as one is with the logits of the controller layer
-    #and one is with the logits of the module layer
+    # batch_size * sample_size
     loglikelihood = template(context)[0]
-    selection_logprob = context.selection_logprob() #Log prob of selection
+    assert loglikelihood.shape.ndims == 1
 
-    shape = [sample_size, -1] + loglikelihood.shape[1:].as_list() #Not sure why 3rd term is needed (for parallel)
-    logprob = tf.reshape(loglikelihood + selection_logprob, shape) #[sample x B]
-    best_selection_indices = tf.stop_gradient(tf.argmax(logprob, axis=0)) #[B]
+    # batch_size * sample_size
+    selection_logprob = context.selection_logprob()
+    assert selection_logprob.shape.ndims == 1
+
+    logprob = tf.reshape(loglikelihood + selection_logprob, [sample_size, -1])
+    best_selection_indices = tf.stop_gradient(tf.argmax(logprob, axis=0))
 
     return context.update_best_selection(best_selection_indices)
 
 
 def m_step(template, optimizer, dataset_size, data_indices):
     context = ModularContext(ModularMode.M_STEP, data_indices, dataset_size)
-
     loglikelihood = template(context)[0]
     selection_logprob = context.selection_logprob()
 
     ctrl_objective = -tf.reduce_mean(selection_logprob)
     module_objective = -tf.reduce_mean(loglikelihood)
+    joint_objective = ctrl_objective + module_objective
 
-    return optimizer.minimize(ctrl_objective + module_objective)
+    tf.summary.scalar('ctrl_objective', ctrl_objective, collections=[M_STEP_SUMMARIES])
+    tf.summary.scalar('module_objective', module_objective, collections=[M_STEP_SUMMARIES])
+    tf.summary.scalar('joint_objective', joint_objective, collections=[M_STEP_SUMMARIES])
+
+    return optimizer.minimize(joint_objective)
 
 
 def evaluation(template, data_indices):
@@ -153,3 +163,6 @@ def get_unique_modules(selection):
     mask = tf.boolean_mask(tile_re, ones)
     uniq, _ = tf.unique(mask)
     return uniq
+
+def create_m_step_summaries():
+    return tf.summary.merge_all(key=M_STEP_SUMMARIES)

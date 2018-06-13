@@ -33,6 +33,20 @@ def create_dense_modules(inputs_or_shape, module_count: int, units: int = None, 
         return ModulePool(module_count, module_fnc, output_shape=[units])
 
 
+def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
+    with tf.variable_scope(None, 'conv_modules'):
+        filter_shape = [module_count] + list(shape)
+        filter = tf.get_variable('filter', filter_shape)
+        biases_shape = [module_count, shape[-1]]
+        biases = tf.get_variable('biases', biases_shape, initializer=tf.zeros_initializer())
+
+        def module_fnc(x, a):
+
+            return tf.nn.conv2d(x, filter[a], strides, padding) + biases[a]
+
+        return ModulePool(module_count, module_fnc, output_shape=None)
+
+
 def modular_layer(inputs, modules: ModulePool, parallel_count: int, context: ModularContext):
     """
     Takes in modules and runs them based on the best selection
@@ -42,9 +56,10 @@ def modular_layer(inputs, modules: ModulePool, parallel_count: int, context: Mod
         #[sample_size*batch x 784]
         inputs = context.begin_modular(inputs) #At first step, tile the inputs so it can go through ALL modules
 
+        flat_inputs = tf.layers.flatten(inputs)
         #Takes in input and returns tensor of shape modules * parallel
         #One output per module, [sample_size*batch x modules]
-        logits = tf.layers.dense(inputs, modules.module_count * parallel_count)
+        logits = tf.layers.dense(flat_inputs, modules.module_count * parallel_count)
         logits = tf.reshape(logits, [-1, parallel_count, modules.module_count]) #[sample*batch x 1 x module]
 
         #For each module and batch, have one logit, so [Batch x modules]
@@ -72,7 +87,7 @@ def modular_layer(inputs, modules: ModulePool, parallel_count: int, context: Mod
         attrs = ModularLayerAttributes(selection, best_selection_persistent, ctrl)
         context.layers.append(attrs)
 
-        return run_modules(inputs, selection, modules.module_fnc, modules.output_shape), logits
+        return run_modules(inputs, selection, modules.module_fnc, modules.output_shape)
 
 
 def masked_layer(inputs, modules: ModulePool, context: ModularContext):

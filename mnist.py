@@ -95,13 +95,13 @@ def run():
     #reuse them, better than using autoreuse=True in the scope
     # shape = [dataset_size, module_count]
     # initializer = tf.placeholder(tf.int32, shape, 'init_for_mask')
-    template = tf.make_template('network', network, masked_bernoulli=False)
+    template = tf.make_template('network', network, masked_bernoulli=True)
     optimizer = tf.train.AdamOptimizer()
     e_step, m_step, eval = modular.modularize(template, optimizer, dataset_size,
                                               data_indices, sample_size=10)
     ll, logits, accuracy, s_entropy, bs_entropy, l4 = eval
 
-    logits = tf.nn.softmax(l4)
+    logits = tf.sigmoid(l4)
     log_re = tf.reshape(logits, [1,-1,module_count,1])
     tf.summary.image('l4_controller_probs', log_re, max_outputs=1)
     # tf.summary.image('best_selection_persistent', bsp, max_outputs=1)
@@ -113,8 +113,8 @@ def run():
     try:
         with tf.Session() as sess:
             time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
-            writer = tf.summary.FileWriter(f'logs/train_testing:initial_with_relu_15m_heirarchical_unmasked_random_initialiser_m5_{time}',sess.graph)
-            test_writer = tf.summary.FileWriter(f'logs/test_testing:initial_with_relu_15m_heirarchical_unmasked_random_initialiser_m5_{time}',sess.graph)
+            writer = tf.summary.FileWriter(f'logs/train_testing:Masked_logits_check_{time}',sess.graph)
+            test_writer = tf.summary.FileWriter(f'logs/test_testing:Masked_logits_check_{time}',sess.graph)
             summaries = tf.summary.merge_all()
             sess.run(tf.global_variables_initializer())
 
@@ -127,7 +127,7 @@ def run():
             sess.run(e_step, feed_dict)
 
 
-            batches = generator([x_train, y_train, np.arange(dataset_size)], 64)
+            batches = generator([x_train, y_train, np.arange(dataset_size)], 128)
             for i, (batch_x, batch_y, indices) in tqdm(enumerate(batches)):
                 feed_dict = {
                     inputs: batch_x,
@@ -136,11 +136,8 @@ def run():
                 }
                 step = e_step if i % 15 == 0 else m_step
                 _, summary_data, log= sess.run([step, summaries, logits], feed_dict)
-                import pdb; pdb.set_trace()
 
-                # if 10 in indices:
-                #      _, summary_data, logit= sess.run([step, summaries,logits], feed_dict)
-                #      plot_logits.append(logit)
+
 
                 writer.add_summary(summary_data, global_step=i)
 
@@ -153,15 +150,6 @@ def run():
 
     except KeyboardInterrupt:
         pass
-        # with open('unmasked_logits_l4_m_5_random.pickle', 'wb') as handle:
-        #     pickle.dump(plot_logits, handle)
-
-        # print('SHAPE:', len(plot_logits))
-        # for i in np.arange(len(plot_logits)):
-        #     plot = plot_logits[i].T
-        #     cmap = mpl.colors.LinearSegmentedColormap.from_list('my_colormap',['white','black'],256)
-        #     plt.imshow(plot,interpolation='nearest', cmap=cmap, vmin=0, vmax=1)
-        #     plt.savefig('plot'+str(i))
 
 
 
