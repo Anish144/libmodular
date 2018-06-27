@@ -60,7 +60,7 @@ def modular_layer(inputs, modules: ModulePool, parallel_count: int, context: Mod
         #Takes in input and returns tensor of shape modules * parallel
         #One output per module, [sample_size*batch x modules]
         logits = tf.layers.dense(flat_inputs, modules.module_count * parallel_count)
-        logits = tf.reshape(logits, [-1, parallel_count, modules.module_count]) #[sample*batch x 1 x module]
+        logits = tf.reshape(logits, [-1, parallel_count, modules.module_count]) #[sample*batch x parallel x module]
 
         #For each module and batch, have one logit, so [Batch x modules]
         ctrl = tfd.Categorical(logits) #Create controller with logits
@@ -90,7 +90,7 @@ def modular_layer(inputs, modules: ModulePool, parallel_count: int, context: Mod
         return run_modules(inputs, selection, modules.module_fnc, modules.output_shape)
 
 
-def masked_layer(inputs, modules: ModulePool, context: ModularContext):
+def masked_layer(inputs, modules: ModulePool, context: ModularContext, initializer):
     """
     Function that takes in input and modules and return the selection based on a Bernoulli mask
     Args:
@@ -104,14 +104,19 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext):
 
         inputs = context.begin_modular(inputs)
 
-        logits = tf.layers.dense(inputs, modules.module_count)
+        flat_inputs = tf.layers.flatten(inputs)
+
+        logits = tf.layers.dense(flat_inputs, modules.module_count)
+        # probs = tf.sigmoid(logits)
+        # greater = tf.greater(probs, 0.5)
+        # gate = tf.cast(greater, tf.int32)
+
 
         ctrl_bern = tfd.Bernoulli(logits) #Create controller with logits
 
         #Initialisation of variables to 1
         # shape = [context.dataset_size, modules.module_count]
-        initializer = tf.zeros_initializer(dtype=tf.int32)
-        # best_selection_persistent = tf.get_variable('best_selection', shape, tf.int32, initializer)
+        # initializer = tf.random_uniform_initializer(maxval=1, dtype=tf.int32)
         
         shape = [context.dataset_size, modules.module_count]
         # initializer = tf.constant_initializer()
@@ -123,6 +128,8 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext):
             sampled_selection = tf.reshape(samples, [context.sample_size, -1, modules.module_count]) 
             selection = tf.concat([best_selection, sampled_selection[1:]], axis=0)
             selection = tf.reshape(selection, [-1, modules.module_count])
+
+            # selection = tf.cast(selection, tf.int32)
         elif context.mode == ModularMode.M_STEP:
             selection = tf.gather(best_selection_persistent, context.data_indices)
         elif context.mode == ModularMode.EVALUATION:
@@ -132,7 +139,7 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext):
 
         attrs = ModularLayerAttributes(selection, best_selection_persistent, ctrl_bern)
         context.layers.append(attrs)
-        return run_masked_modules(inputs, selection, modules.module_fnc, modules.output_shape), logits
+        return run_masked_modules(inputs, selection, modules.module_fnc, modules.output_shape), logits, best_selection_persistent
 
 
 def modularize_target(target, context: ModularContext):

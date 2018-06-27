@@ -33,11 +33,9 @@ class ModularContext:
 
     def batch_selection_entropy(self):
         def layer_entropy(layer):
-            probs = tf.reduce_mean(layer.controller.probs, axis=0) #[parallel x module]
-            reduce_prob = -tf.reduce_sum(probs * tf.log(probs + 1e-30), axis=-1)
-            return reduce_prob
-        hb = tf.reduce_mean([layer_entropy(layer) for layer in self.layers])
-        return hb
+            probs = tf.reduce_mean(layer.controller.probs, axis=0)
+            return -tf.reduce_sum(probs * tf.log(probs + 1e-30), axis=-1)
+        return tf.reduce_mean([layer_entropy(layer) for layer in self.layers])
 
     def selection_logprob(self):
         x = [tf.reduce_sum(attrs.controller.log_prob(attrs.selection), axis=-1) for attrs in self.layers]
@@ -97,7 +95,12 @@ def run_modules(inputs, selection, module_fnc, output_shape):
 def run_masked_modules(inputs, selection, module_fnc, output_shape):
 
     batch_size = tf.shape(inputs)[0]
-    output_shape = [batch_size] + output_shape
+    if output_shape is not None:
+        output_shape = [batch_size] + output_shape
+    else:
+        # This is the only way I am aware of to get the output shape easily
+        dummy = module_fnc(inputs, 0)
+        output_shape = [batch_size] + dummy.shape[1:].as_list()
     #Used modules is just a list of modules that we are using
     used_modules = get_unique_modules(selection)
 
@@ -107,12 +110,10 @@ def run_masked_modules(inputs, selection, module_fnc, output_shape):
         mask = tf.reshape(tf.equal(1, inputs_considered), [-1])
         indices = tf.where(mask)
         affected_inp = tf.boolean_mask(inputs, mask)
-
         output = module_fnc(affected_inp, module)
 
         #Add the outputs, scatter_nd makes it the right shape with 0s for inputs not computed
         return accum + tf.scatter_nd(indices, output, tf.cast(output_shape, tf.int64)) 
-
     output = tf.scan(compute_module, used_modules, initializer=tf.zeros(output_shape))[-1] #Want the last output of the scan fucntion
     return output
 
