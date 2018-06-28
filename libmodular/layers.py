@@ -87,7 +87,7 @@ def modular_layer(inputs, modules: ModulePool, parallel_count: int, context: Mod
         attrs = ModularLayerAttributes(selection, best_selection_persistent, ctrl)
         context.layers.append(attrs)
 
-        return run_modules(inputs, selection, modules.module_fnc, modules.output_shape)
+        return run_modules(inputs, selection, modules.module_fnc, modules.output_shape), logits, best_selection_persistent
 
 
 def masked_layer(inputs, modules: ModulePool, context: ModularContext, initializer):

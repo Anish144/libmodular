@@ -25,7 +25,7 @@ class ModularContext:
         if self.mode == ModularMode.E_STEP and not self.e_step_samples:
             self.e_step_samples = True
             rank = inputs.shape.ndims
-            return tf.tile(inputs, [self.sample_size] +[1] * (rank - 1)) #2D arg for tile for the 2 axes!
+            return tf.tile(inputs, [self.sample_size] +[1] * (rank - 1))
         return inputs
 
     def selection_entropy(self):
