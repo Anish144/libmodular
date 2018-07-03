@@ -56,7 +56,7 @@ def run():
                 hidden, l, bs = modular.modular_layer(activation, modules, parallel_count=1, context=context)
                 logit.append(tf.sigmoid(l))
             else:
-                hidden, l, bs = modular.masked_layer(activation, modules, context, get_initialiser([dataset_size, module_count], 0.65))
+                hidden, l, bs = modular.masked_layer(activation, modules, context, get_initialiser([dataset_size, module_count], 0.25))
                 logit.append(tf.sigmoid(l))
             pooled = tf.nn.max_pool(hidden, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
             activation = tf.nn.relu(pooled)
@@ -102,8 +102,8 @@ def run():
     config.gpu_options.allow_growth = True
     with tf.Session(config=config) as sess:
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
-        writer = tf.summary.FileWriter(f'logs/train_10m_masked_withsummary_{time}', sess.graph)
-        test_writer = tf.summary.FileWriter(f'logs/test_10m_masked_withsummary_{time}', sess.graph)
+        writer = tf.summary.FileWriter(f'logs/train_10m_masked_withsummary_naiveklreg=0.3_{time}', sess.graph)
+        test_writer = tf.summary.FileWriter(f'logs/test_10m_masked_withsummary_naiveklreg=0.3_{time}', sess.graph)
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
         sess.run(tf.global_variables_initializer())

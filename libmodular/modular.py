@@ -62,6 +62,14 @@ class ModularContext:
         """
         return [layer.controller for layer in self.layers]
 
+    def get_kl(self):
+        regulariser = tf.distributions.Bernoulli(0.3)
+        def get_layer_kl(lay_number):
+            ctrl = self.layers[lay_number].controller
+            return tf.distributions.kl_divergence(ctrl, regulariser)
+        return tf.reduce_sum([get_layer_kl(i) for i in range(len(self.layers))])
+
+
 
 def run_modules(inputs, selection, module_fnc, output_shape):
 
@@ -142,7 +150,7 @@ def m_step(template, optimizer, dataset_size, data_indices):
 
     ctrl_objective = -tf.reduce_mean(selection_logprob)
     module_objective = -tf.reduce_mean(loglikelihood)
-    joint_objective = ctrl_objective + module_objective
+    joint_objective = ctrl_objective + module_objective + context.get_kl()
 
     tf.summary.scalar('ctrl_objective', ctrl_objective, collections=[M_STEP_SUMMARIES])
     tf.summary.scalar('module_objective', module_objective, collections=[M_STEP_SUMMARIES])
