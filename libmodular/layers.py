@@ -2,7 +2,7 @@ import tensorflow as tf
 from tensorflow.contrib import distributions as tfd
 import numpy as np
 
-from libmodular.modular import ModulePool, ModularContext, ModularMode, ModularLayerAttributes
+from libmodular.modular import ModulePool, ModularContext, ModularMode, ModularLayerAttributes, VariationalLayerAttributes
 from libmodular.modular import run_modules, run_masked_modules, e_step, m_step, evaluation
 
 
@@ -141,6 +141,63 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext, initializ
         context.layers.append(attrs)
         return run_masked_modules(inputs, selection, modules.module_fnc, modules.output_shape), logits, best_selection_persistent
 
+def variational_mask(inputs, modules: ModulePool, context: ModularContext, eps, rho):
+    """
+    Constructs a Bernoulli masked layer that outputs sparse binary masks dependent on the input
+    Based on the Adaptive network Sparsification paper
+    Args:
+        inputs; Batch X dimension
+        modules; ModulePool named tuple
+        contect; context class
+        eps; threshold for dependent pi
+    """
+    with tf.variable_scope(None, 'variational_mask'):
+        context.variational = True
+
+        a = tf.get_variable(name='a', dtype=tf.float32, initializer=tf.random_uniform([modules.module_count], minval=0.5, maxval=2))
+        b = tf.get_variable(name='b', dtype=tf.float32, initializer=tf.random_uniform([modules.module_count], minval=0.5, maxval=2))
+        u = get_u(modules.module_count)
+        pi = tf.pow((1 - tf.pow(u, tf.divide(1,b))), tf.divide(1,a))
+
+        #Lower input dimenstions
+        flat_inputs = tf.layers.flatten(inputs)
+        lowered_inputs = tf.layers.dense(flat_inputs, modules.module_count)
+
+        eta = tf.get_variable(name='eta', shape=[modules.module_count], dtype=tf.float32)
+        khi = tf.get_variable(name='khi', shape=[modules.module_count], dtype=tf.float32)
+        beta = tfd.MultivariateNormalDiag(eta, khi)
+
+        gamma = tf.get_variable(name='gamma', shape=[modules.module_count], dtype=tf.float32)
+
+        def dependent_pi(inputs, pi, gamma, beta, eps):
+            mean, var = tf.nn.moments(inputs, axes=0, keep_dims=True)
+            standardised = tf.div(tf.subtract(inputs, mean), tf.sqrt(var))
+            new_input = tf.multiply(gamma, standardised) + beta
+            max_input = tf.maximum(eps, new_input)
+            min_input = tf.minimum(1-eps, max_input)
+            return tf.multiply(pi, min_input)
+
+        #Make selection
+        final_pi = dependent_pi(lowered_inputs, pi, gamma, beta.sample(), eps)
+        ctrl_var = tfd.Bernoulli(final_pi)
+
+        if context.mode == ModularMode.EVALUATION:
+            selection = ctrl_var.mode()
+        else:
+            selection = ctrl_var.sample()
+
+        #Need prior on Beta for the KL divergence
+        beta_prior = tfd.MultivariateNormalDiag(tf.zeros([modules.module_count]), 
+                                                tf.multiply(rho, tf.ones([modules.module_count]))
+                                                )
+
+        attrs = VariationalLayerAttributes(selection, ctrl_var, a, b, gamma, beta, beta_prior)
+        context.var_layers.append(attrs)
+
+        return run_masked_modules(inputs, selection, modules.module_fnc, modules.output_shape)
+
+def get_u(shape):
+    return tf.random_uniform([shape], maxval=1)
 
 def modularize_target(target, context: ModularContext):
     if context.mode == ModularMode.E_STEP:
@@ -150,7 +207,7 @@ def modularize_target(target, context: ModularContext):
 
 
 def modularize(template, optimizer, dataset_size, data_indices, sample_size):
-    e = e_step(template, sample_size, dataset_size, data_indices)
+    # e = e_step(template, sample_size, dataset_size, data_indices)
     m = m_step(template, optimizer, dataset_size, data_indices)
     ev = evaluation(template, data_indices)
-    return e, m, ev
+    return m, ev

@@ -2,24 +2,33 @@ from collections import namedtuple
 from enum import Enum
 from typing import List
 import libmodular.tensor_utils as tensor_utils
+from tensorflow.contrib import distributions as tfd
 
 import tensorflow as tf
 
 M_STEP_SUMMARIES = 'M_STEP_SUMMARIES'
 ModularMode = Enum('ModularMode', 'E_STEP M_STEP EVALUATION')
-ModularLayerAttributes = namedtuple('ModularLayerAttributes', ['selection', 'best_selection', 'controller'])
+ModularLayerAttributes = namedtuple('ModularLayerAttributes', 
+                                    ['selection', 'best_selection', 'controller',]
+                                    )
+VariationalLayerAttributes = namedtuple('ModularLayerAttributes', 
+                                    ['selection', 'controller', 'a', 'b', 'gamma', 'beta', 'beta_prior']
+                                    )
 ModulePool = namedtuple('ModulePool', ['module_count', 'module_fnc', 'output_shape'])
 
 
 class ModularContext:
 
-    def __init__(self, mode: ModularMode, data_indices=None, dataset_size: int = None, sample_size: int = 1):
+    def __init__(self, mode: ModularMode, data_indices=None, dataset_size: int = None, sample_size: int = 1, variational=False):
         self.mode = mode
         self.data_indices = data_indices
         self.dataset_size = dataset_size
         self.sample_size = sample_size
         self.e_step_samples = False
         self.layers: List[ModularLayerAttributes] = [] #Save the module layer attributes in "Modular_Layer"
+        self.var_layers: List[VariationalLayerAttributes] = []
+        #Switch for m step to be variational or non variational
+        self.variational = variational
 
     def begin_modular(self, inputs):
         if self.mode == ModularMode.E_STEP and not self.e_step_samples:
@@ -62,13 +71,28 @@ class ModularContext:
         """
         return [layer.controller for layer in self.layers]
 
-    def get_kl(self):
+    def get_naive_kl(self):
         regulariser = tf.distributions.Bernoulli(0.3)
         def get_layer_kl(lay_number):
             ctrl = self.layers[lay_number].controller
             return tf.distributions.kl_divergence(ctrl, regulariser)
         return tf.reduce_sum([get_layer_kl(i) for i in range(len(self.layers))])
 
+    def get_variational_kl(self, alpha):
+
+        def get_layer_KL(number):
+            a = self.var_layers[number].a
+            b = self.var_layers[number].b
+            beta = self.var_layers[number].beta
+            beta_prior = self.var_layers[number].beta_prior
+
+            term_1 = tf.divide(- b + 1, b)
+            term_2 = tf.log( tf.divide(tf.multiply(a, b), alpha))
+            term_bracket = (tf.digamma(1.) - tf.digamma(b) - tf.divide(1., b))
+            term_3 = tf.multiply(tf.divide(a - alpha, a), term_bracket)
+            term_4 = tf.distributions.kl_divergence(beta, beta_prior)
+            return tf.reduce_sum(term_1 + term_2 + term_3 + term_4)
+        return tf.reduce_sum([get_layer_KL(i) for i in range(len(layer_params))])
 
 
 def run_modules(inputs, selection, module_fnc, output_shape):
@@ -126,11 +150,14 @@ def run_masked_modules(inputs, selection, module_fnc, output_shape):
     return output
 
 
+
+
 def e_step(template, sample_size, dataset_size, data_indices):
     context = ModularContext(ModularMode.E_STEP, data_indices, dataset_size, sample_size)
 
     # batch_size * sample_size
     loglikelihood = template(context)[0]
+    import pdb; pdb.set_trace()
     assert loglikelihood.shape.ndims == 1
 
     # batch_size * sample_size
@@ -145,16 +172,26 @@ def e_step(template, sample_size, dataset_size, data_indices):
 
 def m_step(template, optimizer, dataset_size, data_indices):
     context = ModularContext(ModularMode.M_STEP, data_indices, dataset_size)
-    loglikelihood = template(context)[0]
-    selection_logprob = context.selection_logprob()
 
-    ctrl_objective = -tf.reduce_mean(selection_logprob)
-    module_objective = -tf.reduce_mean(loglikelihood)
-    joint_objective = ctrl_objective + module_objective + context.get_kl()
+    if not context.variational:
+        loglikelihood = template(context)[0]
+        selection_logprob = context.selection_logprob()
 
-    tf.summary.scalar('ctrl_objective', ctrl_objective, collections=[M_STEP_SUMMARIES])
-    tf.summary.scalar('module_objective', module_objective, collections=[M_STEP_SUMMARIES])
-    tf.summary.scalar('joint_objective', joint_objective, collections=[M_STEP_SUMMARIES])
+        ctrl_objective = -tf.reduce_mean(selection_logprob)
+        module_objective = -tf.reduce_mean(loglikelihood)
+        joint_objective = ctrl_objective + module_objective + context.get_naive_kl()
+
+        tf.summary.scalar('ctrl_objective', ctrl_objective, collections=[M_STEP_SUMMARIES])
+        tf.summary.scalar('module_objective', module_objective, collections=[M_STEP_SUMMARIES])
+        tf.summary.scalar('joint_objective', joint_objective, collections=[M_STEP_SUMMARIES])
+    else:
+        loglikelihood = template(context)[0]
+        KL = context.get_variational_kl(0.001)
+
+        joint_objective = tf.reduce_mean(loglikelihood) - KL
+
+        tf.summary.scalar('KL', KL, collections=[M_STEP_SUMMARIES])
+        tf.summary.scalar('ELBO', joint_objective, collections=[M_STEP_SUMMARIES])
 
     return optimizer.minimize(joint_objective)
 

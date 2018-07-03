@@ -52,12 +52,13 @@ def run():
             input_channels = activation.shape[-1]
             filter_shape = [3, 3, input_channels, 8]
             modules = modular.create_conv_modules(filter_shape, module_count, strides=[1, 1, 1, 1])
-            if not masked_bernoulli:
-                hidden, l, bs = modular.modular_layer(activation, modules, parallel_count=1, context=context)
-                logit.append(tf.sigmoid(l))
-            else:
-                hidden, l, bs = modular.masked_layer(activation, modules, context, get_initialiser([dataset_size, module_count], 0.25))
-                logit.append(tf.sigmoid(l))
+            hidden = modular.variational_mask(activation, modules, context, 0.0001, 3.16)
+            # if not masked_bernoulli:
+            #     hidden, l, bs = modular.modular_layer(activation, modules, parallel_count=1, context=context)
+            #     logit.append(tf.sigmoid(l))
+            # else:
+            #     hidden, l, bs = modular.masked_layer(activation, modules, context, get_initialiser([dataset_size, module_count], 0.25))
+            #     logit.append(tf.sigmoid(l))
             pooled = tf.nn.max_pool(hidden, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
             activation = tf.nn.relu(pooled)
 
@@ -73,25 +74,25 @@ def run():
         selection_entropy = context.selection_entropy()
         batch_selection_entropy = context.batch_selection_entropy()
 
-        return loglikelihood, logits, accuracy, selection_entropy, batch_selection_entropy, logit, bs
+        return loglikelihood, logits, accuracy, selection_entropy, batch_selection_entropy
 
     template = tf.make_template('network', network, masked_bernoulli=True)
     optimizer = tf.train.AdamOptimizer()
-    e_step, m_step, eval = modular.modularize(template, optimizer, dataset_size,
+    m_step, eval = modular.modularize(template, optimizer, dataset_size,
                                               data_indices, sample_size=10)
-    ll, logits, accuracy, s_entropy, bs_entropy, logit, bs = eval
+    ll, logits, accuracy, s_entropy, bs_entropy = eval
 
-    l1 = tf.reshape(logit[0], [1,-1,module_count,1])
-    l2 = tf.reshape(logit[1], [1,-1,module_count,1])
-    l3 = tf.reshape(logit[2], [1,-1,module_count,1])
+    # l1 = tf.reshape(logit[0], [1,-1,module_count,1])
+    # l2 = tf.reshape(logit[1], [1,-1,module_count,1])
+    # l3 = tf.reshape(logit[2], [1,-1,module_count,1])
 
-    tf.summary.image('l1_controller_probs', l1, max_outputs=1)
-    tf.summary.image('l2_controller_probs', l2, max_outputs=1)
-    tf.summary.image('l3_controller_probs', l3, max_outputs=1)
+    # tf.summary.image('l1_controller_probs', l1, max_outputs=1)
+    # tf.summary.image('l2_controller_probs', l2, max_outputs=1)
+    # tf.summary.image('l3_controller_probs', l3, max_outputs=1)
 
-    bs = tf.reshape(bs, [1,-1,module_count,1])
+    # bs = tf.reshape(bs, [1,-1,module_count,1])
 
-    tf.summary.image('bs_persistent',  tf.cast(bs, dtype=tf.float32), max_outputs=1)
+    # tf.summary.image('bs_persistent',  tf.cast(bs, dtype=tf.float32), max_outputs=1)
 
     tf.summary.scalar('loglikelihood', tf.reduce_mean(ll))
     tf.summary.scalar('accuracy', accuracy)
@@ -102,8 +103,8 @@ def run():
     config.gpu_options.allow_growth = True
     with tf.Session(config=config) as sess:
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
-        writer = tf.summary.FileWriter(f'logs/train_10m_masked_withsummary_naiveklreg=0.3_{time}', sess.graph)
-        test_writer = tf.summary.FileWriter(f'logs/test_10m_masked_withsummary_naiveklreg=0.3_{time}', sess.graph)
+        writer = tf.summary.FileWriter(f'logs/train_10m_variational_masked_{time}', sess.graph)
+        test_writer = tf.summary.FileWriter(f'logs/test_10m_variational_masked_{time}', sess.graph)
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
         sess.run(tf.global_variables_initializer())
@@ -120,7 +121,7 @@ def run():
 
         for i in tqdm(range(500000)):
             # Switch between E-step and M-step
-            step = e_step if i % 25 == 0 else m_step
+            step = m_step
 
             # Sometimes generate summaries
             if i % 50 == 0:
