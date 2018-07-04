@@ -3,7 +3,7 @@ from tensorflow.contrib import distributions as tfd
 import numpy as np
 
 from libmodular.modular import ModulePool, ModularContext, ModularMode, ModularLayerAttributes, VariationalLayerAttributes
-from libmodular.modular import run_modules, run_masked_modules, e_step, m_step, evaluation
+from libmodular.modular import run_modules, run_masked_modules, e_step, m_step, evaluation, run_masked_modules_withloop
 
 
 def create_dense_modules(inputs_or_shape, module_count: int, units: int = None, activation=None):
@@ -139,9 +139,9 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext, initializ
 
         attrs = ModularLayerAttributes(selection, best_selection_persistent, ctrl_bern)
         context.layers.append(attrs)
-        return run_masked_modules(inputs, selection, modules.module_fnc, modules.output_shape), logits, best_selection_persistent
+        return run_masked_modules(inputs, selection, modules.module_fnc, modules.output_shape)
 
-def variational_mask(inputs, modules: ModulePool, context: ModularContext, eps, rho):
+def variational_mask(inputs, modules: ModulePool, context: ModularContext, eps, rho, batch_size):
     """
     Constructs a Bernoulli masked layer that outputs sparse binary masks dependent on the input
     Based on the Adaptive network Sparsification paper
@@ -194,7 +194,7 @@ def variational_mask(inputs, modules: ModulePool, context: ModularContext, eps, 
         attrs = VariationalLayerAttributes(selection, ctrl_var, a, b, gamma, beta, beta_prior)
         context.var_layers.append(attrs)
 
-        return run_masked_modules(inputs, selection, modules.module_fnc, modules.output_shape)
+        return run_masked_modules_withloop(inputs, selection, modules.module_fnc, modules.output_shape)
 
 def get_u(shape):
     return tf.random_uniform([shape], maxval=1)

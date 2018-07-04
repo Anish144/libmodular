@@ -124,7 +124,7 @@ def run_modules(inputs, selection, module_fnc, output_shape):
     return output #[sample * B x 10 (=units)]
 
 
-def run_masked_modules(inputs, selection, module_fnc, output_shape):
+def run_masked_modules(inputs, selection, module_fnc, output_shape, ):
 
     batch_size = tf.shape(inputs)[0]
     if output_shape is not None:
@@ -142,6 +142,7 @@ def run_masked_modules(inputs, selection, module_fnc, output_shape):
         mask = tf.reshape(tf.equal(1, inputs_considered), [-1])
         indices = tf.where(mask)
         affected_inp = tf.boolean_mask(inputs, mask)
+
         output = module_fnc(affected_inp, module)
 
         #Add the outputs, scatter_nd makes it the right shape with 0s for inputs not computed
@@ -149,15 +150,48 @@ def run_masked_modules(inputs, selection, module_fnc, output_shape):
     output = tf.scan(compute_module, used_modules, initializer=tf.zeros(output_shape))[-1] #Want the last output of the scan fucntion
     return output
 
+def run_masked_modules_withloop(inputs, selection, module_fnc, output_shape):
 
+    batch_size = tf.shape(inputs)[0]
+    if output_shape is not None:
+        output_shape = [batch_size] + output_shape
+    else:
+        # This is the only way I am aware of to get the output shape easily
+        dummy = module_fnc(inputs, 0)
+        output_shape = [batch_size] + dummy.shape[1:].as_list()
 
+    #Used modules is just a list of modules that we are using
+    used_modules = get_unique_modules(selection)
+
+    condition = lambda accum, used_module, i: tf.less(i, tf.shape(used_modules)[0])
+
+    def compute_module(accum, used_module, i):
+
+        module = tf.slice(used_module, [i], [1])
+        inputs_considered = tf.slice(selection, [0, module[0]], [batch_size, 1])
+        mask = tf.reshape(tf.equal(1, inputs_considered), [-1])
+        indices = tf.where(mask)
+        affected_inp = tf.boolean_mask(inputs, mask)
+        import pdb; pdb.set_trace()
+
+        output = module_fnc(affected_inp, module[0])
+
+        #Add the outputs, scatter_nd makes it the right shape with 0s for inputs not computed
+        full_output =  accum + tf.scatter_nd(indices, output, tf.cast(output_shape, tf.int64)) 
+
+        i = tf.add(i, 1)
+        return full_output, used_modules, i
+
+    i = tf.constant(0)
+    output = tf.while_loop(condition, compute_module, [tf.zeros(output_shape), used_modules, i])
+    return output
 
 def e_step(template, sample_size, dataset_size, data_indices):
     context = ModularContext(ModularMode.E_STEP, data_indices, dataset_size, sample_size)
 
     # batch_size * sample_size
     loglikelihood = template(context)[0]
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     assert loglikelihood.shape.ndims == 1
 
     # batch_size * sample_size
@@ -188,10 +222,10 @@ def m_step(template, optimizer, dataset_size, data_indices):
         loglikelihood = template(context)[0]
         KL = context.get_variational_kl(0.001)
 
-        joint_objective = tf.reduce_mean(loglikelihood) - KL
+        joint_objective = -(tf.reduce_mean(loglikelihood) - KL)
 
         tf.summary.scalar('KL', KL, collections=[M_STEP_SUMMARIES])
-        tf.summary.scalar('ELBO', joint_objective, collections=[M_STEP_SUMMARIES])
+        tf.summary.scalar('ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
 
     return optimizer.minimize(joint_objective)
 

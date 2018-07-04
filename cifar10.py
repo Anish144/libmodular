@@ -25,12 +25,12 @@ def run():
     y_test = y_test.astype(np.uint8)  # Fix test_data dtype
     dataset_size = x_train.shape[0]
 
+    batch_size = 200
     # Train dataset
-    train = tf.data.Dataset.from_tensor_slices((x_train, y_train))._enumerate().repeat().shuffle(50000).batch(128)
+    train = tf.data.Dataset.from_tensor_slices((x_train, y_train))._enumerate().repeat().shuffle(50000).batch(batch_size)
     # Test dataset
-    test_batch_size = 2000
     # dummy_data_indices = tf.zeros([test_batch_size], dtype=tf.int64)
-    test = tf.data.Dataset.from_tensor_slices((x_test, y_test))._enumerate().repeat().batch(test_batch_size)
+    test = tf.data.Dataset.from_tensor_slices((x_test, y_test))._enumerate().repeat().batch(batch_size)
 
     # Handle to switch between datasets
     handle = tf.placeholder(tf.string, [])
@@ -47,12 +47,14 @@ def run():
     def network(context: modular.ModularContext, masked_bernoulli=False):
         # 4 modular CNN layers
         activation = inputs_tr
+        activation = tf.reshape(activation, [batch_size, 32, 32, 3])
         logit=[]
         for j in range(3):
             input_channels = activation.shape[-1]
             filter_shape = [3, 3, input_channels, 8]
             modules = modular.create_conv_modules(filter_shape, module_count, strides=[1, 1, 1, 1])
-            hidden = modular.variational_mask(activation, modules, context, 0.0001, 3.16)
+            hidden = modular.masked_layer(activation, modules, context)
+            import pdb; pdb.set_trace()
             # if not masked_bernoulli:
             #     hidden, l, bs = modular.modular_layer(activation, modules, parallel_count=1, context=context)
             #     logit.append(tf.sigmoid(l))
@@ -103,8 +105,8 @@ def run():
     config.gpu_options.allow_growth = True
     with tf.Session(config=config) as sess:
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
-        writer = tf.summary.FileWriter(f'logs/train_10m_variational_masked_{time}', sess.graph)
-        test_writer = tf.summary.FileWriter(f'logs/test_10m_variational_masked_{time}', sess.graph)
+        writer = tf.summary.FileWriter(f'logs/train_10m_variational_masked_TRIALRUN_{time}', sess.graph)
+        test_writer = tf.summary.FileWriter(f'logs/test_10m_variational_masked_TRIALRUN_{time}', sess.graph)
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
         sess.run(tf.global_variables_initializer())
@@ -124,7 +126,7 @@ def run():
             step = m_step
 
             # Sometimes generate summaries
-            if i % 50 == 0:
+            if i % 1 == 0:
                 summaries = m_step_summaries if step == m_step else general_summaries
                 _, summary_data = sess.run([step, summaries], train_dict)
                 writer.add_summary(summary_data, global_step=i) 
