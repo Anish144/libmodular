@@ -12,7 +12,7 @@ ModularLayerAttributes = namedtuple('ModularLayerAttributes',
                                     ['selection', 'best_selection', 'controller',]
                                     )
 VariationalLayerAttributes = namedtuple('ModularLayerAttributes', 
-                                    ['selection', 'controller', 'a', 'b', 'gamma', 'beta', 'beta_prior']
+                                    ['selection', 'controller', 'a', 'b', 'beta', 'beta_prior']
                                     )
 ModulePool = namedtuple('ModulePool', ['module_count', 'module_fnc', 'output_shape'])
 
@@ -91,8 +91,8 @@ class ModularContext:
             term_bracket = (tf.digamma(1.) - tf.digamma(b) - tf.divide(1., b))
             term_3 = tf.multiply(tf.divide(a - alpha, a), term_bracket)
             term_4 = tf.distributions.kl_divergence(beta, beta_prior)
-            return tf.reduce_sum(term_1 + term_2 + term_3 + term_4)
-        return tf.reduce_sum([get_layer_KL(i) for i in range(len(layer_params))])
+            return tf.reduce_sum(term_1 + term_2 + term_3) + term_4
+        return tf.reduce_sum([get_layer_KL(i) for i in range(len(self.var_layers))])
 
 
 def run_modules(inputs, selection, module_fnc, output_shape):
@@ -124,6 +124,45 @@ def run_modules(inputs, selection, module_fnc, output_shape):
     return output #[sample * B x 10 (=units)]
 
 
+def run_modules_withloop(inputs, selection, module_fnc, output_shape):
+
+    batch_size = tf.shape(inputs)[0]
+    if output_shape is not None:
+        output_shape = [batch_size] + output_shape
+    else:
+        # This is the only way I am aware of to get the output shape easily
+        dummy = module_fnc(inputs, 0)
+        output_shape = [batch_size] + dummy.shape[1:].as_list()   
+    #Used modules is just a list of modules that we are using
+    used_modules, _ = tf.unique(tf.reshape(selection, (-1,))) #Size = No. of Modules
+
+    condition = lambda accum, used_module, i: tf.less(i, tf.shape(used_modules)[0])
+
+    def compute_module(accum, used_module, i):
+        module = tf.slice(used_module, [i], [1])[0]
+
+        mask = tf.equal(module, selection) #select all the elements with the module we are using
+
+        #OR operation on parallel axis, so that the input is passed through the module if any of the parallel has selected it
+        reduced_mask = tf.reduce_any(mask, axis=-1) 
+
+        indices = tf.where(reduced_mask) #Coordinates of TRUE
+        affected_inp = tf.boolean_mask(inputs, reduced_mask) #Selects the batches that will go through this module
+        output = module_fnc(affected_inp, module)
+
+        #Add the outputs, scatter_nd makes it the right shape with 0s for inputs not computed
+        full_output =  accum + tf.scatter_nd(indices, output, tf.cast(output_shape, tf.int64)) 
+
+        i = tf.add(i, 1)
+        return full_output, used_modules, i
+
+    i = tf.constant(0, tf.int32)
+    output = tf.while_loop(condition, compute_module, [tf.zeros(output_shape), used_modules, i])[0]
+
+    return output
+
+
+
 def run_masked_modules(inputs, selection, module_fnc, output_shape, ):
 
     batch_size = tf.shape(inputs)[0]
@@ -148,6 +187,7 @@ def run_masked_modules(inputs, selection, module_fnc, output_shape, ):
         #Add the outputs, scatter_nd makes it the right shape with 0s for inputs not computed
         return accum + tf.scatter_nd(indices, output, tf.cast(output_shape, tf.int64)) 
     output = tf.scan(compute_module, used_modules, initializer=tf.zeros(output_shape))[-1] #Want the last output of the scan fucntion
+
     return output
 
 def run_masked_modules_withloop(inputs, selection, module_fnc, output_shape):
@@ -172,7 +212,6 @@ def run_masked_modules_withloop(inputs, selection, module_fnc, output_shape):
         mask = tf.reshape(tf.equal(1, inputs_considered), [-1])
         indices = tf.where(mask)
         affected_inp = tf.boolean_mask(inputs, mask)
-        import pdb; pdb.set_trace()
 
         output = module_fnc(affected_inp, module[0])
 
@@ -182,8 +221,9 @@ def run_masked_modules_withloop(inputs, selection, module_fnc, output_shape):
         i = tf.add(i, 1)
         return full_output, used_modules, i
 
-    i = tf.constant(0)
-    output = tf.while_loop(condition, compute_module, [tf.zeros(output_shape), used_modules, i])
+    i = tf.constant(0, tf.int32)
+    output = tf.while_loop(condition, compute_module, [tf.zeros(output_shape), used_modules, i])[0]
+
     return output
 
 def e_step(template, sample_size, dataset_size, data_indices):
@@ -191,7 +231,7 @@ def e_step(template, sample_size, dataset_size, data_indices):
 
     # batch_size * sample_size
     loglikelihood = template(context)[0]
-    # import pdb; pdb.set_trace()
+
     assert loglikelihood.shape.ndims == 1
 
     # batch_size * sample_size
@@ -204,25 +244,28 @@ def e_step(template, sample_size, dataset_size, data_indices):
     return context.update_best_selection(best_selection_indices)
 
 
-def m_step(template, optimizer, dataset_size, data_indices):
+def m_step(template, optimizer, dataset_size, data_indices, variational):
     context = ModularContext(ModularMode.M_STEP, data_indices, dataset_size)
+    context.variational = variational
 
     if not context.variational:
+        print('NOT VAR')
         loglikelihood = template(context)[0]
         selection_logprob = context.selection_logprob()
 
         ctrl_objective = -tf.reduce_mean(selection_logprob)
         module_objective = -tf.reduce_mean(loglikelihood)
-        joint_objective = ctrl_objective + module_objective + context.get_naive_kl()
+        joint_objective = ctrl_objective + module_objective
 
         tf.summary.scalar('ctrl_objective', ctrl_objective, collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('module_objective', module_objective, collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('joint_objective', joint_objective, collections=[M_STEP_SUMMARIES])
     else:
+        print('VAR')
         loglikelihood = template(context)[0]
         KL = context.get_variational_kl(0.001)
 
-        joint_objective = -(tf.reduce_mean(loglikelihood) - KL)
+        joint_objective = -  60000 * tf.reduce_mean(loglikelihood - KL)
 
         tf.summary.scalar('KL', KL, collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])

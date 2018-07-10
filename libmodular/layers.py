@@ -3,7 +3,7 @@ from tensorflow.contrib import distributions as tfd
 import numpy as np
 
 from libmodular.modular import ModulePool, ModularContext, ModularMode, ModularLayerAttributes, VariationalLayerAttributes
-from libmodular.modular import run_modules, run_masked_modules, e_step, m_step, evaluation, run_masked_modules_withloop
+from libmodular.modular import run_modules, run_masked_modules, e_step, m_step, evaluation, run_masked_modules_withloop, run_modules_withloop
 
 
 def create_dense_modules(inputs_or_shape, module_count: int, units: int = None, activation=None):
@@ -87,7 +87,7 @@ def modular_layer(inputs, modules: ModulePool, parallel_count: int, context: Mod
         attrs = ModularLayerAttributes(selection, best_selection_persistent, ctrl)
         context.layers.append(attrs)
 
-        return run_modules(inputs, selection, modules.module_fnc, modules.output_shape), logits, best_selection_persistent
+        return run_modules_withloop(inputs, selection, modules.module_fnc, modules.output_shape), logits, best_selection_persistent
 
 
 def masked_layer(inputs, modules: ModulePool, context: ModularContext, initializer):
@@ -112,7 +112,7 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext, initializ
         # gate = tf.cast(greater, tf.int32)
 
 
-        ctrl_bern = tfd.Bernoulli(logits) #Create controller with logits
+        ctrl_bern = tfd.Bernoulli(logits=logits) #Create controller with logits
 
         #Initialisation of variables to 1
         # shape = [context.dataset_size, modules.module_count]
@@ -128,8 +128,6 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext, initializ
             sampled_selection = tf.reshape(samples, [context.sample_size, -1, modules.module_count]) 
             selection = tf.concat([best_selection, sampled_selection[1:]], axis=0)
             selection = tf.reshape(selection, [-1, modules.module_count])
-
-            # selection = tf.cast(selection, tf.int32)
         elif context.mode == ModularMode.M_STEP:
             selection = tf.gather(best_selection_persistent, context.data_indices)
         elif context.mode == ModularMode.EVALUATION:
@@ -139,9 +137,9 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext, initializ
 
         attrs = ModularLayerAttributes(selection, best_selection_persistent, ctrl_bern)
         context.layers.append(attrs)
-        return run_masked_modules(inputs, selection, modules.module_fnc, modules.output_shape)
+        return run_masked_modules_withloop(inputs, selection, modules.module_fnc, modules.output_shape), logits, best_selection_persistent
 
-def variational_mask(inputs, modules: ModulePool, context: ModularContext, eps, rho, batch_size):
+def variational_mask(inputs, modules: ModulePool, context: ModularContext, eps, rho, initializer):
     """
     Constructs a Bernoulli masked layer that outputs sparse binary masks dependent on the input
     Based on the Adaptive network Sparsification paper
@@ -152,16 +150,13 @@ def variational_mask(inputs, modules: ModulePool, context: ModularContext, eps, 
         eps; threshold for dependent pi
     """
     with tf.variable_scope(None, 'variational_mask'):
-        context.variational = True
 
-        a = tf.get_variable(name='a', dtype=tf.float32, initializer=tf.random_uniform([modules.module_count], minval=0.5, maxval=2))
-        b = tf.get_variable(name='b', dtype=tf.float32, initializer=tf.random_uniform([modules.module_count], minval=0.5, maxval=2))
+        a = tf.get_variable(name='a', dtype=tf.float32, initializer=tf.random_uniform([modules.module_count], minval=8, maxval=10.5))
+        b = tf.get_variable(name='b', dtype=tf.float32, initializer=tf.random_uniform([modules.module_count], minval=8, maxval=10.5))
         u = get_u(modules.module_count)
         pi = tf.pow((1 - tf.pow(u, tf.divide(1,b))), tf.divide(1,a))
 
-        #Lower input dimenstions
-        flat_inputs = tf.layers.flatten(inputs)
-        lowered_inputs = tf.layers.dense(flat_inputs, modules.module_count)
+
 
         eta = tf.get_variable(name='eta', shape=[modules.module_count], dtype=tf.float32)
         khi = tf.get_variable(name='khi', shape=[modules.module_count], dtype=tf.float32)
@@ -170,31 +165,51 @@ def variational_mask(inputs, modules: ModulePool, context: ModularContext, eps, 
         gamma = tf.get_variable(name='gamma', shape=[modules.module_count], dtype=tf.float32)
 
         def dependent_pi(inputs, pi, gamma, beta, eps):
-            mean, var = tf.nn.moments(inputs, axes=0, keep_dims=True)
-            standardised = tf.div(tf.subtract(inputs, mean), tf.sqrt(var))
+            #Lower input dimenstions
+            flat_inputs = tf.stop_gradient(tf.layers.flatten(inputs))
+            lowered_inputs = tf.layers.dense(flat_inputs, modules.module_count)
+            mean, var = tf.nn.moments(lowered_inputs, axes=0, keep_dims=True)
+            standardised = tf.div(tf.subtract(lowered_inputs, mean), tf.sqrt(var))
             new_input = tf.multiply(gamma, standardised) + beta
             max_input = tf.maximum(eps, new_input)
             min_input = tf.minimum(1-eps, max_input)
             return tf.multiply(pi, min_input)
 
-        #Make selection
-        final_pi = dependent_pi(lowered_inputs, pi, gamma, beta.sample(), eps)
-        ctrl_var = tfd.Bernoulli(final_pi)
+        def new_dependent_pi(inputs, pi):
+            flat_inputs = tf.stop_gradient(tf.layers.flatten(inputs))
+            lowered_inputs = tf.layers.dense(flat_inputs, modules.module_count)
+            return tf.multiply(pi, lowered_inputs)
 
-        if context.mode == ModularMode.EVALUATION:
-            selection = ctrl_var.mode()
-        else:
-            selection = ctrl_var.sample()
+        #Make selection
+        final_pi = tf.make_template('dependent_pi', new_dependent_pi)
+        # new_pi = new_dependent_pi(inputs, pi)
+        get_pi = final_pi(inputs, pi)
+        tau = 0.1
+        term_1 = tf.log(tf.divide(get_pi,1-get_pi))
+        term_2 = tf.log(tf.divide(u, 1-u))
+        z = tf.sigmoid(tf.multiply(tf.divide(1,tau), term_1 + term_2))
+
+        if context.mode == ModularMode.M_STEP:
+            selection = tf.cast(z, tf.int32)
+        elif context.mode == ModularMode.EVALUATION:
+            test_pi = get_test_selection(a, b)
+            selection = tf.cast(final_pi(inputs, get_test_selection(a,b)), dtype=tf.int32)
 
         #Need prior on Beta for the KL divergence
         beta_prior = tfd.MultivariateNormalDiag(tf.zeros([modules.module_count]), 
                                                 tf.multiply(rho, tf.ones([modules.module_count]))
                                                 )
-
-        attrs = VariationalLayerAttributes(selection, ctrl_var, a, b, gamma, beta, beta_prior)
+        attrs = VariationalLayerAttributes(selection, z, a, b, beta, beta_prior)
         context.var_layers.append(attrs)
 
-        return run_masked_modules_withloop(inputs, selection, modules.module_fnc, modules.output_shape)
+        return run_masked_modules_withloop(inputs, selection, modules.module_fnc, modules.output_shape), selection, attrs
+
+def get_test_selection(a, b):
+    denom = tf.exp(tf.lgamma(1 + tf.pow(a,-1) + b))
+    term_1 = tf.exp(tf.lgamma(1 + tf.pow(a,-1)))
+    term_2 = tf.multiply(b, tf.exp(tf.lgamma(b)))
+    numerator = tf.multiply(term_1, term_2)
+    return tf.divide(numerator, denom)
 
 def get_u(shape):
     return tf.random_uniform([shape], maxval=1)
@@ -206,8 +221,13 @@ def modularize_target(target, context: ModularContext):
     return target
 
 
-def modularize(template, optimizer, dataset_size, data_indices, sample_size):
-    # e = e_step(template, sample_size, dataset_size, data_indices)
-    m = m_step(template, optimizer, dataset_size, data_indices)
+def modularize(template, optimizer, dataset_size, data_indices, sample_size, variational):
+    e = e_step(template, sample_size, dataset_size, data_indices)
+    m = m_step(template, optimizer, dataset_size, data_indices, variational)
+    ev = evaluation(template, data_indices)
+    return e, m, ev
+
+def modularize_variational(template, optimizer, dataset_size, data_indices, variational):
+    m = m_step(template, optimizer, dataset_size, data_indices, variational)
     ev = evaluation(template, data_indices)
     return m, ev
