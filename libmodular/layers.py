@@ -139,7 +139,7 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext, initializ
         context.layers.append(attrs)
         return run_masked_modules_withloop(inputs, selection, modules.module_fnc, modules.output_shape), logits, best_selection_persistent
 
-def variational_mask(inputs, modules: ModulePool, context: ModularContext, eps, rho, initializer):
+def variational_mask(inputs, modules: ModulePool, context: ModularContext, eps, rho):
     """
     Constructs a Bernoulli masked layer that outputs sparse binary masks dependent on the input
     Based on the Adaptive network Sparsification paper
@@ -151,43 +151,49 @@ def variational_mask(inputs, modules: ModulePool, context: ModularContext, eps, 
     """
     with tf.variable_scope(None, 'variational_mask'):
 
-        a = tf.get_variable(name='a', dtype=tf.float32, initializer=tf.random_uniform([modules.module_count], minval=8, maxval=10.5))
-        b = tf.get_variable(name='b', dtype=tf.float32, initializer=tf.random_uniform([modules.module_count], minval=8, maxval=10.5))
-        u = get_u(modules.module_count)
+        in_shape = modules.module_count
+
+        a = tf.get_variable(name='a', dtype=tf.float32, initializer=tf.random_uniform([in_shape], minval=2, maxval=10.5))
+        b = tf.get_variable(name='b', dtype=tf.float32, initializer=tf.random_uniform([in_shape], minval=2, maxval=10.5))
+
+        u = get_u(in_shape)
+
         pi = tf.pow((1 - tf.pow(u, tf.divide(1,b))), tf.divide(1,a))
 
-
-
-        eta = tf.get_variable(name='eta', shape=[modules.module_count], dtype=tf.float32)
-        khi = tf.get_variable(name='khi', shape=[modules.module_count], dtype=tf.float32)
+        eta = tf.get_variable(name='eta', shape=[in_shape], dtype=tf.float32)
+        khi = tf.get_variable(name='khi', shape=[in_shape], dtype=tf.float32)
         beta = tfd.MultivariateNormalDiag(eta, khi)
 
-        gamma = tf.get_variable(name='gamma', shape=[modules.module_count], dtype=tf.float32)
+        gamma = tf.get_variable(name='gamma', shape=[in_shape], dtype=tf.float32)
 
         def dependent_pi(inputs, pi, gamma, beta, eps):
             #Lower input dimenstions
             flat_inputs = tf.stop_gradient(tf.layers.flatten(inputs))
-            lowered_inputs = tf.layers.dense(flat_inputs, modules.module_count)
-            mean, var = tf.nn.moments(lowered_inputs, axes=0, keep_dims=True)
-            standardised = tf.div(tf.subtract(lowered_inputs, mean), tf.sqrt(var))
+            inputs = tf.layers.dense(flat_inputs, modules.module_count)
+            mean, var = tf.nn.moments(inputs, axes=0, keep_dims=True)
+            standardised = tf.stop_gradient(tf.div(tf.subtract(inputs, mean), tf.sqrt(var)))
             new_input = tf.multiply(gamma, standardised) + beta
             max_input = tf.maximum(eps, new_input)
             min_input = tf.minimum(1-eps, max_input)
-            return tf.multiply(pi, min_input)
+            new_pi = tf.multiply(pi, min_input)
+            return tf.layers.dense(new_pi, modules.module_count)
 
         def new_dependent_pi(inputs, pi):
+            """
+            Cant use this as pi has to be between 0 and 1!!!
+            """
             flat_inputs = tf.stop_gradient(tf.layers.flatten(inputs))
             lowered_inputs = tf.layers.dense(flat_inputs, modules.module_count)
-            return tf.multiply(pi, lowered_inputs)
+            return tf.sigmoid(tf.multiply(pi, lowered_inputs))
 
         #Make selection
-        final_pi = tf.make_template('dependent_pi', new_dependent_pi)
-        # new_pi = new_dependent_pi(inputs, pi)
-        get_pi = final_pi(inputs, pi)
+        final_pi = tf.make_template('dependent', new_dependent_pi)
+        new_pi = final_pi(inputs, pi)
+
         tau = 0.1
-        term_1 = tf.log(tf.divide(get_pi,1-get_pi))
+        term_1 = tf.log(tf.divide(new_pi, 1-new_pi))
         term_2 = tf.log(tf.divide(u, 1-u))
-        z = tf.sigmoid(tf.multiply(tf.divide(1,tau), term_1 + term_2))
+        z = tf.sigmoid(tf.multiply(tf.divide(1, tau), term_1 + term_2))
 
         if context.mode == ModularMode.M_STEP:
             selection = tf.cast(z, tf.int32)
@@ -196,13 +202,60 @@ def variational_mask(inputs, modules: ModulePool, context: ModularContext, eps, 
             selection = tf.cast(final_pi(inputs, get_test_selection(a,b)), dtype=tf.int32)
 
         #Need prior on Beta for the KL divergence
-        beta_prior = tfd.MultivariateNormalDiag(tf.zeros([modules.module_count]), 
-                                                tf.multiply(rho, tf.ones([modules.module_count]))
+        beta_prior = tfd.MultivariateNormalDiag(tf.zeros([in_shape]), 
+                                                tf.multiply(rho, tf.ones([in_shape]))
                                                 )
         attrs = VariationalLayerAttributes(selection, z, a, b, beta, beta_prior)
         context.var_layers.append(attrs)
 
         return run_masked_modules_withloop(inputs, selection, modules.module_fnc, modules.output_shape), selection, attrs
+
+
+def new_controller(inputs, modules: ModulePool, context: ModularContext, initializer):
+
+    with tf.variable_scope(None, 'New_controller'):
+
+        # alpha = 0.001
+        # concent_1 = tf.constant(alpha/modules.module_count, dtype=tf.float32)
+        # concent_2 = tf.constant(1, dtype=tf.float32)
+        # pi = tfd.Beta(concent_1, concent_2).sample(sample_shape=modules.module_count)
+
+        a = tf.get_variable(name='a', dtype=tf.float32, initializer=tf.random_uniform([modules.module_count], minval=0.1, maxval=10))
+        b = tf.get_variable(name='b', dtype=tf.float32, initializer=tf.random_uniform([modules.module_count], minval=0.1, maxval=10))
+
+        u = get_u(modules.module_count)
+
+        pi = tf.pow((1 - tf.pow(u, tf.divide(1,b))), tf.divide(1,a))
+
+        #Get controller logits
+        inputs = context.begin_modular(inputs)
+        flat_inputs = tf.layers.flatten(inputs)
+        lowered_inputs = tf.layers.dense(flat_inputs, modules.module_count)
+        logits = tf.multiply(pi, lowered_inputs)
+
+        ctrl_bern = tfd.Bernoulli(logits=logits)
+
+        shape = [context.dataset_size, modules.module_count]
+        best_selection_persistent = tf.get_variable('best_selection', shape=shape, dtype=tf.int32, initializer=initializer)
+
+        if context.mode == ModularMode.E_STEP:
+            best_selection = tf.gather(best_selection_persistent, context.data_indices)[tf.newaxis]
+            samples = ctrl_bern.sample()
+            sampled_selection = tf.reshape(samples, [context.sample_size, -1, modules.module_count]) 
+            selection = tf.concat([best_selection, sampled_selection[1:]], axis=0)
+            selection = tf.reshape(selection, [-1, modules.module_count])
+        elif context.mode == ModularMode.M_STEP:
+            selection = tf.gather(best_selection_persistent, context.data_indices)
+        elif context.mode == ModularMode.EVALUATION:
+            selection = ctrl_bern.mode()
+        else:
+            raise ValueError('Invalid modular mode')
+
+        attrs = ModularLayerAttributes(selection, best_selection_persistent, ctrl_bern, a, b)
+        context.layers.append(attrs)
+
+        return run_masked_modules_withloop(inputs, selection, modules.module_fnc, modules.output_shape), tf.sigmoid(logits), best_selection_persistent
+
 
 def get_test_selection(a, b):
     denom = tf.exp(tf.lgamma(1 + tf.pow(a,-1) + b))

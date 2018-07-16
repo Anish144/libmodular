@@ -1,5 +1,5 @@
 import datetime
-
+import random
 import tensorflow as tf
 import numpy as np
 import libmodular as modular
@@ -10,11 +10,15 @@ import sys
 from libmodular.modular import create_m_step_summaries, M_STEP_SUMMARIES
 
 E_step = sys.argv[1]
+new_controller = sys.argv[2]
+
 
 def get_initialiser(data_size, n, module_count):
-    choice = np.random.randint(low=0, high=module_count, size=(data_size, n), dtype=int)
-    one_hot = np.zeros((data_size, module_count))
-    for i in range(len(choice[0,:])):
+    choice = np.zeros((data_size, n), dtype=int)
+    for j in range(data_size):
+        choice[j,:] = random.sample(range(module_count), n)
+    one_hot = np.zeros((data_size, module_count), dtype=int)
+    for i in range(n):
         one_hot[np.arange(data_size), choice[:,i]]=1
     return tf.constant_initializer(one_hot, dtype=tf.int32, verify_shape=True)
 
@@ -51,23 +55,31 @@ def run():
 
     module_count = 10
     variational = False
-    masked_bernoulli = True
+    masked_bernoulli = False
 
     def network(context: modular.ModularContext, masked_bernoulli=False, variational=False):
         # 4 modular CNN layers
         activation = inputs_tr
         ctrl_logits=[]
-        for j in range(3):
+        for j in range(4):
             input_channels = activation.shape[-1]
             filter_shape = [3, 3, input_channels, 8]
             modules = modular.create_conv_modules(filter_shape, module_count, strides=[1, 1, 1, 1])
-            if not variational:
-                hidden, l, bs  = modular.masked_layer(activation, modules, context, get_initialiser(dataset_size, 2, module_count))
+            if masked_bernoulli:
+                print('WORKS')
+                hidden, l, bs  = modular.masked_layer(activation, modules, context, get_initialiser(dataset_size, 5, module_count))
+            elif variational:
+                print('Doesnt work')
+                hidden = modular.variational_mask(activation, modules, context, 0.001, 3.17, get_initialiser(dataset_size, 5, module_count))
+            elif new_controller == 'True':
+                print('NEW')
+                hidden, l, bs = modular.new_controller(activation, modules, context,  get_initialiser(dataset_size, 5, module_count))
             else:
-                hidden = modular.variational_mask(activation, modules, context, 0.001, 3.17, get_initialiser(dataset_size, 2, module_count))
+                print('UNMASKED')
+                hidden, l, bs  = modular.modular_layer(activation, modules, 3, context)
+            ctrl_logits.append(l)
             pooled = tf.nn.max_pool(hidden, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
             activation = tf.nn.relu(pooled)
-            ctrl_logits.append(tf.sigmoid(l))
 
         flattened = tf.layers.flatten(activation)
         logits = tf.layers.dense(flattened, units=10)
@@ -115,20 +127,23 @@ def run():
     config.gpu_options.allow_growth = True
     with tf.Session(config=config) as sess:
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
-        writer = tf.summary.FileWriter(f'logs/train_10m_maskedBernoulli_TRIAL:Loop_E:' + str(E_step)+ f'_{time}', sess.graph)
-        test_writer = tf.summary.FileWriter(f'logs/test_10m_maskedBernoulli_TRIAL:Loop_E:' + str(E_step)+ f'_{time}', sess.graph)
+        # writer = tf.summary.FileWriter(f'logs/train_10m_maskedBernoulli_TRIAL_NEWINIT:Loop_E:' + str(E_step)+ f'_{time}', sess.graph)
+        # test_writer = tf.summary.FileWriter(f'logs/test_10m_maskedBernoulli_TRIAL_NEWINIT:Loop_E:' + str(E_step)+ f'_{time}', sess.graph)
+        writer = tf.summary.FileWriter(f'logs/train:New_Controller_CIFAR10_:'+f'_{time}', sess.graph)
+        test_writer = tf.summary.FileWriter(f'logs/test:New_Controller_CIFAR10_:'+f'_{time}', sess.graph)
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
         sess.run(tf.global_variables_initializer())
         train_dict = {handle: make_handle(sess, train)}
         test_dict = {handle: make_handle(sess, test)}
 
-        if E_step  == True:
+
+        if E_step == 'True':
             print('EEEEE')
             for i in tqdm(range(400)):
                 _ = sess.run(e_step, train_dict)
 
-        for i in tqdm(range(300000)):
+        for i in tqdm(range(600000)):
             # Switch between E-step and M-step
             if variational:
                 step = m_step
@@ -142,6 +157,8 @@ def run():
                 writer.add_summary(summary_data, global_step=i) 
                 summary_data = sess.run(general_summaries, test_dict)
                 test_writer.add_summary(summary_data, global_step=i)
+                writer.flush()
+                test_writer.flush()
             else:
                 sess.run(step, train_dict)
 
