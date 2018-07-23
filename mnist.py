@@ -5,9 +5,7 @@ import numpy as np
 import libmodular as modular
 import observations
 from tqdm import tqdm
-# import matplotlib.pyplot as plt
-# import matplotlib as mpl
-# import pickle
+
 import numpy as np
 from libmodular.modular import create_m_step_summaries, M_STEP_SUMMARIES
 import sys
@@ -57,10 +55,10 @@ def run():
     labels = tf.placeholder(tf.int32, [None], 'labels')
     data_indices = tf.placeholder(tf.int32, [None], 'data_indices') #Labels the batch...
 
-    module_count = 10
-    variational = True
+    module_count = 16
+    variational = 'False'
     masked_bernoulli = False
-    new_controller = False
+    new_controller = True
 
     def network(context: modular.ModularContext, masked_bernoulli=False, variational=variational):
         """
@@ -81,7 +79,7 @@ def run():
             modules = modular.create_dense_modules(hidden, module_count, units=10) 
             logits, l2, bs = modular.masked_layer(hidden, modules, context,  get_initialiser(dataset_size, 2, module_count)) #[sample * B x units]
 
-        elif variational:
+        elif variational == 'True':
 
             modules = modular.create_dense_modules(inputs, module_count, units=128, activation=tf.nn.relu) 
             hidden, l1, bs_1 = modular.variational_mask(inputs, modules, context, 0.001, 3.17) #[sample * B x units]
@@ -178,9 +176,10 @@ def run():
             time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
 
             if REALRUN=='True':
-                writer = tf.summary.FileWriter(f'logs/train:_10m_Variational_try_Initial:20_alpha:1_{time}',sess.graph)
-                test_writer = tf.summary.FileWriter(f'logs/test:_10m_Variational_try_Initial:20_alpha:1_{time}',sess.graph)
-
+                writer = tf.summary.FileWriter(f'logs/train:_16m_New_added_ctrl_Initial:20-30_alpha:0.1_{time}',
+                                                sess.graph)
+                test_writer = tf.summary.FileWriter(f'logs/test:_16m_New_added_ctrl_Initial:20-30_alpha:0.1_{time}',
+                                                    sess.graph)
             general_summaries = tf.summary.merge_all()
             m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
             sess.run(tf.global_variables_initializer())

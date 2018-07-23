@@ -54,7 +54,7 @@ def run():
     inputs_tr = tf.transpose(inputs_cast, perm=(0, 2, 3, 1))
     labels_cast = tf.cast(labels, tf.int32)
 
-    module_count = 20
+    module_count = 32
     masked_bernoulli = False
 
     def network(context: modular.ModularContext, masked_bernoulli=False, variational=False):
@@ -62,19 +62,22 @@ def run():
         activation = inputs_tr
         bs_log = []
         ctrl_logits =[]
-        for j in range(3):
+        for j in range(4):
             input_channels = activation.shape[-1]
             filter_shape = [3, 3, input_channels, 8]
             modules = modular.create_conv_modules(filter_shape, module_count, strides=[1, 1, 1, 1])
             if masked_bernoulli:
                 print('Maksed Bernoulli')
-                hidden, l, bs  = modular.masked_layer(activation, modules, context, get_initialiser(dataset_size, 5, module_count))
+                hidden, l, bs  = modular.masked_layer(activation, modules, context,
+                                                     get_initialiser(dataset_size, 5, module_count))
             elif variational == 'True':
                 print('Variational')
                 hidden, l, bs = modular.variational_mask(activation, modules, context, 0.001, 3.17)
             elif new_controller == 'True':
                 print('New')
-                hidden, l, bs = modular.new_controller(activation, modules, context,  get_initialiser(dataset_size, 5, module_count))
+                hidden, l, bs = modular.new_controller(activation, modules, context, 
+                                                      get_initialiser(dataset_size, 5, module_count))
+                hidden = modular.batch_norm(hidden)
             else:
                 print('Vanilla')
                 hidden, l, bs  = modular.modular_layer(activation, modules, 3, context)
@@ -84,10 +87,7 @@ def run():
             activation = tf.nn.relu(pooled)
 
         flattened = tf.layers.flatten(activation)
-        modules = modular.create_dense_modules(flattened, module_count, units=10) 
-        logits, l4, bs_4 = modular.new_controller(flattened, modules, context,  get_initialiser(dataset_size, 5, module_count)) #[sample * B x units]
-        ctrl_logits.append(l4)
-        bs_log.append(bs_4)
+        logits = tf.layers.dense(10)
 
         target = modular.modularize_target(labels_cast, context)
         loglikelihood = tf.distributions.Categorical(logits).log_prob(target)
@@ -100,12 +100,13 @@ def run():
 
         return loglikelihood, logits, accuracy, selection_entropy, batch_selection_entropy, ctrl_logits, bs_log
 
-    template = tf.make_template('network', network, masked_bernoulli=masked_bernoulli, variational=variational)
+    template = tf.make_template('network', network, masked_bernoulli=masked_bernoulli, 
+                                variational=variational)
     optimizer = tf.train.AdamOptimizer(learning_rate=0.005)
 
     if variational == 'False':
         e_step, m_step, eval = modular.modularize(template, optimizer, dataset_size,
-                                                  data_indices, sample_size=15, variational=variational)
+                                                  data_indices, sample_size=10, variational=variational)
     else:
         m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
                                                   data_indices, variational)
@@ -142,8 +143,8 @@ def run():
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
 
         if REALRUN=='True':
-            writer = tf.summary.FileWriter(f'logs/train:Cifar10_20m_New_ctrl:alpha:1.2_Initial:10-30_lr:0.005:'+f'_{time}', sess.graph)
-            test_writer = tf.summary.FileWriter(f'logs/test:Cifar10_20m_New_ctrl:alpha:1.2_Initial:10-30_lr:0.005:'+f'_{time}', sess.graph)
+            writer = tf.summary.FileWriter(f'logs/train:Cifar10_16m_ADDED_CONTROLLER:alpha:0.1_Initial:10-30(a_lower)_lr:0.005:'+f'_{time}', sess.graph)
+            test_writer = tf.summary.FileWriter(f'logs/test:Cifar10_16m_ADDED_CONTROLLER:alpha:0.1_Initial:10-30(a_lower)_lr:0.005:'+f'_{time}', sess.graph)
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
         sess.run(tf.global_variables_initializer())
@@ -166,7 +167,10 @@ def run():
             # Sometimes generate summaries
             if i % 25 == 0:
                 summaries = m_step_summaries if step == m_step else general_summaries
-                _, summary_data = sess.run([step, summaries], train_dict)
+                _, summary_data, test_accuracy = sess.run([step, summaries, accuracy], train_dict)
+
+                if i % 100 == 0:
+                    print('Test Accuracy:', test_accuracy)
 
                 if REALRUN=='True':
                     writer.add_summary(summary_data, global_step=i) 

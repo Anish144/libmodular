@@ -5,6 +5,9 @@ from collections import namedtuple
 import numpy as np
 import pdb
 from tqdm import tqdm
+import observations
+import datetime
+
 from blocksparse.matmul import BlocksparseMatMul
 
 tfd = tf.contrib.distributions
@@ -33,9 +36,9 @@ def generator(arrays, batch_size):
 
 
 def run_weights(data, units, block_size, activation=None):
-	with variable_scope(None, 'layer'):
+	with tf.variable_scope(None, 'layer'):
 
-		in_shape = [data.shape[-1].value]
+		in_shape = data.shape[-1].value
 
 		block = BlockPool(units, in_shape//block_size, units//block_size)
 		sparse_pattern = generate_sparse_pattern(block)
@@ -79,7 +82,7 @@ def get_relaxed_bernoulli(pi, tau, u):
 def get_u(shape):
 	return tf.random_uniform([shape], maxval=1)
 
-def get_variational_kl(self, alpha):
+def get_variational_kl(alpha):
 	def get_layer_KL(number):
 		a = layers[number].a
 		b = layers[number].b
@@ -94,7 +97,7 @@ def run():
 
 	#Load data
 	(x_train, y_train), (x_test, y_test) = observations.mnist('~/data/MNIST')
-	dataset_size = tf.shape(x_train)[0]
+	dataset_size = x_train.shape[0]
 
 	inputs = tf.placeholder(tf.float32, [None, 28 * 28], 'inputs')
 	labels = tf.placeholder(tf.int32, [None], 'labels')
@@ -106,10 +109,10 @@ def run():
 
 		logits = tf.layers.dense(hidden, 10)
 
-		loglikelihood = tf.distributions.Categorical(logits).log_prob(target)
+		loglikelihood = tf.distributions.Categorical(logits).log_prob(labels)
 
 		predicted = tf.argmax(logits, axis=-1, output_type=tf.int32)
-		accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, target), tf.float32))
+		accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, labels), tf.float32))
 
 		return tf.reduce_mean(loglikelihood), accuracy, sparse_hidden, sparse_logits
 
@@ -124,8 +127,8 @@ def run():
 	sp_hid = tf.reshape(sp_hid, [1, tf.shape(sp_hid)[0], tf.shape(sp_hid)[1], 1])
 	sp_log = tf.reshape(sp_log, [1, tf.shape(sp_log)[0], tf.shape(sp_log)[1], 1])
 
-	tf.summary.image('Sparse Pattern 1', sp_hid, max_output=1)
-	tf.summary.image('Sparse Pattern 2', sp_log, max_output=2)
+	tf.summary.image('Sparse Pattern 1', sp_hid, max_outputs=1)
+	tf.summary.image('Sparse Pattern 2', sp_log, max_outputs=2)
 
 	tf.summary.scalar('loglikelihood', loglike)
 	tf.summary.scalar('accuracy', acc)
@@ -135,8 +138,8 @@ def run():
 		sess.run(init)
 
 		time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
-		writer = tf.summary.FileWriter(f'logs/train:_Block_Sparse_Bayesian_{time}',sess.graph)
-		test_writer = tf.summary.FileWriter(f'logs/test:_Block_Sparse_Bayesian_{time}',sess.graph)
+		writer = tf.summary.FileWriter('logs/train:_Block_Sparse_Bayesian')
+		test_writer = tf.summary.FileWriter('logs/test:_Block_Sparse_Bayesian')
 
 		general_summaries = tf.summary.merge_all()
 
