@@ -87,7 +87,7 @@ def run():
             activation = tf.nn.relu(pooled)
 
         flattened = tf.layers.flatten(activation)
-        logits = tf.layers.dense(10)
+        logits = tf.layers.dense(flattened, units=10)
 
         target = modular.modularize_target(labels_cast, context)
         loglikelihood = tf.distributions.Categorical(logits).log_prob(target)

@@ -90,7 +90,7 @@ class ModularContext:
             term_2 = tf.log( tf.divide(tf.multiply(a, b), alpha))
             term_bracket = (tf.digamma(1.) - tf.digamma(b) - tf.divide(1., b))
             term_3 = tf.multiply(tf.divide(a - alpha, a), term_bracket)
-            term_4 = tf.distributions.kl_divergence(beta, beta_prior)
+            # term_4 = tf.distributions.kl_divergence(beta, beta_prior)
             return tf.reduce_sum(term_1 + term_2 + term_3)
         return tf.reduce_mean([get_layer_KL(i) for i in range(len(self.layers))])
 
