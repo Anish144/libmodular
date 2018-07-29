@@ -84,15 +84,15 @@ class ModularContext:
         def get_layer_KL(number):
             a = self.layers[number].a
             b = self.layers[number].b
-            # beta = self.layers[number].beta
-            # beta_prior = self.layers[number].beta_prior
+            beta = self.layers[number].beta
+            beta_prior = self.layers[number].beta_prior
             term_1 = tf.divide(- b + 1, b)
             term_2 = tf.log( tf.divide(tf.multiply(a, b), alpha))
             term_bracket = (tf.digamma(1.) - tf.digamma(b) - tf.divide(1., b))
             term_3 = tf.multiply(tf.divide(a - alpha, a), term_bracket)
-            # term_4 = tf.distributions.kl_divergence(beta, beta_prior)
-            return tf.reduce_sum(term_1 + term_2 + term_3)
-        return tf.reduce_mean([get_layer_KL(i) for i in range(len(self.layers))])
+            term_4 = tf.distributions.kl_divergence(beta, beta_prior)
+            return tf.reduce_sum(term_1 + term_2 + term_3) + term_4
+        return tf.reduce_sum([get_layer_KL(i) for i in range(len(self.layers))])
 
 
 def run_modules(inputs, selection, module_fnc, output_shape):
@@ -224,7 +224,7 @@ def run_masked_modules_withloop(inputs, selection, module_fnc, output_shape):
     i = tf.constant(0, tf.int32)
     output = tf.while_loop(condition, compute_module, [tf.zeros(output_shape), used_modules, i])[0]
 
-    return output
+    return output + inputs
 
 def e_step(template, sample_size, dataset_size, data_indices):
     context = ModularContext(ModularMode.E_STEP, data_indices, dataset_size, sample_size)
@@ -243,7 +243,7 @@ def e_step(template, sample_size, dataset_size, data_indices):
     return context.update_best_selection(best_selection_indices)
 
 
-def m_step(template, optimizer, dataset_size, data_indices, variational):
+def m_step(template, optimizer, dataset_size, data_indices, variational, moving_average):
     context = ModularContext(ModularMode.M_STEP, data_indices, dataset_size)
 
     if variational == 'False':
@@ -255,26 +255,30 @@ def m_step(template, optimizer, dataset_size, data_indices, variational):
         ctrl_objective = -tf.reduce_mean(selection_logprob)
         module_objective = -tf.reduce_mean(loglikelihood)
 
-        joint_objective =  dataset_size * (ctrl_objective + module_objective + KL)
+        joint_objective =  -dataset_size*(tf.reduce_mean(selection_logprob + loglikelihood - KL))
 
+        tf.summary.scalar('KL', KL, collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('ctrl_objective', ctrl_objective, collections=[M_STEP_SUMMARIES])
-        tf.summary.scalar('module_objective', module_objective, collections=[M_STEP_SUMMARIES])
-        tf.summary.scalar('joint_objective', joint_objective, collections=[M_STEP_SUMMARIES])
+        tf.summary.scalar('module_objective', -module_objective, collections=[M_STEP_SUMMARIES])
+        tf.summary.scalar('ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
     else:
         print('VAR')
         loglikelihood = template(context)[0]
-        KL = context.get_variational_kl(1)
+        KL = context.get_variational_kl(1.9)
 
-        joint_objective = - (tf.reduce_mean(loglikelihood) - KL)
+        joint_objective = - (tf.reduce_mean(loglikelihood - KL))
 
         tf.summary.scalar('KL', KL, collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
 
-    return optimizer.minimize(joint_objective)
+    with tf.control_dependencies([moving_average]):
+        opt = optimizer.minimize(joint_objective)
+
+    return opt
 
 
-def evaluation(template, data_indices):
-    context = ModularContext(ModularMode.EVALUATION, data_indices)
+def evaluation(template, data_indices, dataset_size):
+    context = ModularContext(ModularMode.EVALUATION, data_indices, dataset_size)
     return template(context)
 
 def get_unique_modules(selection):

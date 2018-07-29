@@ -6,7 +6,8 @@ import libmodular as modular
 import observations
 from tqdm import tqdm
 import sys
-
+from tensorflow.python import debug as tf_debug
+# import matplotlib.pyplot as plt
 from libmodular.modular import create_m_step_summaries, M_STEP_SUMMARIES
 
 REALRUN = sys.argv[1]
@@ -54,7 +55,7 @@ def run():
     inputs_tr = tf.transpose(inputs_cast, perm=(0, 2, 3, 1))
     labels_cast = tf.cast(labels, tf.int32)
 
-    module_count = 32
+    module_count = 16
     masked_bernoulli = False
 
     def network(context: modular.ModularContext, masked_bernoulli=False, variational=False):
@@ -62,7 +63,24 @@ def run():
         activation = inputs_tr
         bs_log = []
         ctrl_logits =[]
-        for j in range(4):
+        l_out_log = []
+        ema_list = []
+
+        input_channels = activation.shape[-1]
+        filter_shape = [3, 3, input_channels, 8]
+        activation = modular.conv_layer(activation, filter_shape, strides=[1,1,1,1])
+
+
+        # input_channels = activation.shape[-1]
+        # filter_shape = [3, 3, input_channels, 16]
+        # activation = modular.conv_layer(activation, filter_shape, strides=[1,1,1,1])
+
+
+        # input_channels = activation.shape[-1]
+        # filter_shape = [3, 3, input_channels, 32]
+        # activation = modular.conv_layer(activation, filter_shape, strides=[1,1,1,1])
+
+        for j in range(2):
             input_channels = activation.shape[-1]
             filter_shape = [3, 3, input_channels, 8]
             modules = modular.create_conv_modules(filter_shape, module_count, strides=[1, 1, 1, 1])
@@ -72,10 +90,11 @@ def run():
                                                      get_initialiser(dataset_size, 5, module_count))
             elif variational == 'True':
                 print('Variational')
-                hidden, l, bs = modular.variational_mask(activation, modules, context, 0.001, 3.17)
+                hidden, l, bs, l_out = modular.variational_mask(activation, modules, context, 0.001, 3.17)
+                hidden = modular.batch_norm(hidden)
             elif new_controller == 'True':
                 print('New')
-                hidden, l, bs = modular.new_controller(activation, modules, context, 
+                hidden, ema_out, l, bs = modular.new_controller(activation, modules, context, 
                                                       get_initialiser(dataset_size, 5, module_count))
                 hidden = modular.batch_norm(hidden)
             else:
@@ -83,6 +102,7 @@ def run():
                 hidden, l, bs  = modular.modular_layer(activation, modules, 3, context)
             ctrl_logits.append(l)
             bs_log.append(bs)
+            ema_list.append(ema_out)
             pooled = tf.nn.max_pool(hidden, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
             activation = tf.nn.relu(pooled)
 
@@ -98,39 +118,38 @@ def run():
         selection_entropy = context.selection_entropy()
         batch_selection_entropy = context.batch_selection_entropy()
 
-        return loglikelihood, logits, accuracy, selection_entropy, batch_selection_entropy, ctrl_logits, bs_log
+        return (loglikelihood, logits, accuracy, selection_entropy, batch_selection_entropy, 
+                tf.group(ema_list), ctrl_logits, bs_log, l_out_log)
 
     template = tf.make_template('network', network, masked_bernoulli=masked_bernoulli, 
                                 variational=variational)
-    optimizer = tf.train.AdamOptimizer(learning_rate=0.005)
+
+    ll, logits, accuracy, s_entropy, bs_entropy, ema_opt, ctrl_logits, bs_log, l_out_log = modular.evaluation(template,
+                                                                data_indices,
+                                                                dataset_size)
+
+    with tf.control_dependencies([ema_opt]):
+        optimizer = tf.train.AdamOptimizer(learning_rate=0.005)
 
     if variational == 'False':
-        e_step, m_step, eval = modular.modularize(template, optimizer, dataset_size,
-                                                  data_indices, sample_size=10, variational=variational)
+        e_step, m_step = modular.modularize(template, optimizer, dataset_size,
+                                                  data_indices, sample_size=10, 
+                                                  variational=variational, 
+                                                  moving_average=ema_opt)
     else:
         m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
                                                   data_indices, variational)
-    ll, logits, accuracy, s_entropy, bs_entropy, ctrl_logits, bs_log = eval
 
-    l1 = tf.reshape(ctrl_logits[0], [1,-1,module_count,1])
-    l2 = tf.reshape(ctrl_logits[1], [1,-1,module_count,1])
-    l3 = tf.reshape(ctrl_logits[2], [1,-1,module_count,1])
-    l4 = tf.reshape(ctrl_logits[3], [1,-1,module_count,1])
 
-    tf.summary.image('l1_controller_probs', l1, max_outputs=1)
-    tf.summary.image('l2_controller_probs', l2, max_outputs=1)
-    tf.summary.image('l3_controller_probs', l3, max_outputs=1)
-    tf.summary.image('l4_controller_probs', l4, max_outputs=1)
+    for i in range(len(ctrl_logits)):
+        l = tf.reshape(ctrl_logits[i], [1,-1,module_count,1])
+        tf.summary.image('l' + str(i) + '_controller_probs', l, max_outputs=1)
 
-    bs_1 = tf.reshape(bs_log[0] , [1,-1,module_count,1])
-    bs_2 = tf.reshape(bs_log[1] , [1,-1,module_count,1])
-    bs_3 = tf.reshape(bs_log[2] , [1,-1,module_count,1])
-    bs_4 = tf.reshape(bs_log[3] , [1,-1,module_count,1])
+    for i in range(len(bs_log)):
+        bs = tf.reshape(bs_log[i] , [1,-1,module_count,1])
+        tf.summary.image('best_selection_'+ str(i), tf.cast(bs, dtype=tf.float32), max_outputs=1)
 
-    tf.summary.image('best_selection_1', tf.cast(bs_1, dtype=tf.float32), max_outputs=1)
-    tf.summary.image('best_selection_2', tf.cast(bs_2, dtype=tf.float32), max_outputs=1)
-    tf.summary.image('best_selection_3', tf.cast(bs_3, dtype=tf.float32), max_outputs=1)
-    tf.summary.image('best_selection_4', tf.cast(bs_4, dtype=tf.float32), max_outputs=1)
+
 
     tf.summary.scalar('loglikelihood', tf.reduce_mean(ll))
     tf.summary.scalar('accuracy', accuracy)
@@ -139,18 +158,22 @@ def run():
 
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
+
     with tf.Session(config=config) as sess:
+        sess = tf_debug.LocalCLIDebugWrapperSession(sess)
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
 
         if REALRUN=='True':
-            writer = tf.summary.FileWriter(f'logs/train:Cifar10_16m_ADDED_CONTROLLER:alpha:0.1_Initial:10-30(a_lower)_lr:0.005:'+f'_{time}', sess.graph)
-            test_writer = tf.summary.FileWriter(f'logs/test:Cifar10_16m_ADDED_CONTROLLER:alpha:0.1_Initial:10-30(a_lower)_lr:0.005:'+f'_{time}', sess.graph)
+            writer = tf.summary.FileWriter(f'logs/train:Cifar10_16m_ADDED_Moving_average:0.5_EVERYHTINGREDUCED:alpha:0.1_Initial_a=3.8-4.2,b=1.8-2.2_lr:0.005:'+f'_{time}', sess.graph)
+            test_writer = tf.summary.FileWriter(f'logs/test:Cifar10_16m_ADDED_Moving_average:0.5_EVERYHTINGREDUCED:alpha:0.1_Initial_a=3.8-4.2,b=1.8-2.2_lr:0.005:'+f'_{time}', sess.graph)
+            # writer = tf.summary.FileWriter(f'logs/train:Cifar10_Variational_with_everything_reducemeaned_alpha=1.9_a=3.8-4.2,b=1.8-2.2_{time}')
+            # test_writer = tf.summary.FileWriter(f'logs/test:Cifar10_Variational_with_everything_reducemeaned_alpha=1.9_a=3.8-4.2,b=1.8-2.2_{time}')
+
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
         sess.run(tf.global_variables_initializer())
         train_dict = {handle: make_handle(sess, train)}
         test_dict = {handle: make_handle(sess, test)}
-
 
         if E_step == 'True' and variational == 'False':
             print('EEEEE')
@@ -161,27 +184,35 @@ def run():
             # Switch between E-step and M-step
             if variational == 'True':
                 step = m_step
-            else:
+            else:  
                 step = e_step if i % 30 == 0 else m_step
 
-            # Sometimes generate summaries
-            if i % 25 == 0:
-                summaries = m_step_summaries if step == m_step else general_summaries
-                _, summary_data, test_accuracy = sess.run([step, summaries, accuracy], train_dict)
 
-                if i % 100 == 0:
-                    print('Test Accuracy:', test_accuracy)
+            # Sometimes generate summaries
+            if i % 100 == 0:
+                summaries = m_step_summaries
+                _, summary_data, test_accuracy, log, bs = sess.run([step, summaries, accuracy, 
+                                                                       ctrl_logits[0], bs_log[0], 
+                                                                       ], train_dict)
+                # non_zeros = np.zeros((log.shape[0], log.shape[1]))
+                # j=0
+                # for i in log:
+                #     zeros = np.zeros((len(i)))
+                #     zeros[i>0.2] = 1
+                #     non_zeros[j,:] = zeros
+                #     j+=1
+                # plt.bar(np.arange(len(i)), np.sum(non_zeros, axis=0))
+                # plt.savefig('Sparsemaxtest.png')
+                # import pdb; pdb.set_trace()
 
                 if REALRUN=='True':
                     writer.add_summary(summary_data, global_step=i) 
-                    writer.flush()
 
                 summary_data = sess.run(general_summaries, test_dict)
 
                 if REALRUN=='True':
                     test_writer.add_summary(summary_data, global_step=i)
 
-                    test_writer.flush()
             else:
                 sess.run(step, train_dict)
 
