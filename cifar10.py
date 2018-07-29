@@ -80,7 +80,7 @@ def run():
         # filter_shape = [3, 3, input_channels, 32]
         # activation = modular.conv_layer(activation, filter_shape, strides=[1,1,1,1])
 
-        for j in range(2):
+        for j in range(3):
             input_channels = activation.shape[-1]
             filter_shape = [3, 3, input_channels, 8]
             modules = modular.create_conv_modules(filter_shape, module_count, strides=[1, 1, 1, 1])
@@ -129,7 +129,7 @@ def run():
                                                                 dataset_size)
 
     with tf.control_dependencies([ema_opt]):
-        optimizer = tf.train.AdamOptimizer(learning_rate=0.005)
+        optimizer = tf.train.AdamOptimizer(learning_rate=0.001)
 
     if variational == 'False':
         e_step, m_step = modular.modularize(template, optimizer, dataset_size,
@@ -164,8 +164,8 @@ def run():
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
 
         if REALRUN=='True':
-            writer = tf.summary.FileWriter(f'logs/train:Cifar10_16m_ADDED_Moving_average:0.5_EVERYHTINGREDUCED:alpha:0.1_Initial_a=3.8-4.2,b=1.8-2.2_lr:0.005:'+f'_{time}', sess.graph)
-            test_writer = tf.summary.FileWriter(f'logs/test:Cifar10_16m_ADDED_Moving_average:0.5_EVERYHTINGREDUCED:alpha:0.1_Initial_a=3.8-4.2,b=1.8-2.2_lr:0.005:'+f'_{time}', sess.graph)
+            writer = tf.summary.FileWriter(f'logs/train:Cifar10_16m_ADDED_Moving_average:0.5_EVERYHTINGREDUCED:alpha:0.1_Initial_a=3.8-4.2,b=1.8-2.2_lr:0.001:'+f'_{time}', sess.graph)
+            test_writer = tf.summary.FileWriter(f'logs/test:Cifar10_16m_ADDED_Moving_average:0.5_EVERYHTINGREDUCED:alpha:0.1_Initial_a=3.8-4.2,b=1.8-2.2_lr:0.001:'+f'_{time}', sess.graph)
             # writer = tf.summary.FileWriter(f'logs/train:Cifar10_Variational_with_everything_reducemeaned_alpha=1.9_a=3.8-4.2,b=1.8-2.2_{time}')
             # test_writer = tf.summary.FileWriter(f'logs/test:Cifar10_Variational_with_everything_reducemeaned_alpha=1.9_a=3.8-4.2,b=1.8-2.2_{time}')
 

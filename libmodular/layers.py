@@ -16,7 +16,7 @@ def create_dense_modules(inputs_or_shape, module_count: int, units: int = None, 
             weights_shape = [module_count, inputs_or_shape.shape[-1].value, units] #First dimension is the weights of a specific module
         else:
             weights_shape = [module_count] + inputs_or_shape
-        weights = tf.get_variable('weights', weights_shape)
+        weights = tf.get_variable('weights', weights_shape, initializer=tf.contrib.layers.xavier_initializer)
         biases_shape = [module_count, units]
         biases = tf.get_variable('biases', biases_shape, initializer=tf.zeros_initializer())
 
@@ -36,7 +36,7 @@ def create_dense_modules(inputs_or_shape, module_count: int, units: int = None, 
 def conv_layer(x, shape, strides, padding='SAME'):
     with tf.variable_scope(None, 'simple_conv_layer'):
         filter_shape = list(shape)
-        filter = tf.get_variable('filter', filter_shape)
+        filter = tf.get_variable('filter', filter_shape, initializer=tf.contrib.layers.xavier_initializer)
         biases_shape = [shape[-1]]
         biases = tf.get_variable('biases', biases_shape, initializer=tf.zeros_initializer())
         hidden = tf.nn.conv2d(x, filter, strides, padding) + biases
@@ -47,7 +47,7 @@ def conv_layer(x, shape, strides, padding='SAME'):
 def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
     with tf.variable_scope(None, 'conv_modules'):
         filter_shape = [module_count] + list(shape)
-        filter = tf.get_variable('filter', filter_shape)
+        filter = tf.get_variable('filter', filter_shape, initializer=tf.contrib.layers.xavier_initializer)
         biases_shape = [module_count, shape[-1]]
         biases = tf.get_variable('biases', biases_shape, initializer=tf.zeros_initializer())
 
