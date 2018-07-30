@@ -96,7 +96,7 @@ def run():
                 print('New')
                 hidden, ema_out, l, bs = modular.new_controller(activation, modules, context, 
                                                       get_initialiser(dataset_size, 5, module_count))
-                hidden = modular.batch_norm(hidden)
+                # hidden = modular.batch_norm(hidden)
             else:
                 print('Vanilla')
                 hidden, l, bs  = modular.modular_layer(activation, modules, 3, context)
@@ -160,7 +160,7 @@ def run():
     config.gpu_options.allow_growth = True
 
     with tf.Session(config=config) as sess:
-        sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+        # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
 
         if REALRUN=='True':
