@@ -16,7 +16,7 @@ def create_dense_modules(inputs_or_shape, module_count: int, units: int = None, 
             weights_shape = [module_count, inputs_or_shape.shape[-1].value, units] #First dimension is the weights of a specific module
         else:
             weights_shape = [module_count] + inputs_or_shape
-        weights = tf.get_variable('weights', weights_shape)
+        weights = tf.get_variable('weights', weights_shape, initializer=tf.contrib.layers.xavier_initializer())
         biases_shape = [module_count, units]
         biases = tf.get_variable('biases', biases_shape, initializer=tf.zeros_initializer())
 
@@ -36,7 +36,7 @@ def create_dense_modules(inputs_or_shape, module_count: int, units: int = None, 
 def conv_layer(x, shape, strides, padding='SAME'):
     with tf.variable_scope(None, 'simple_conv_layer'):
         filter_shape = list(shape)
-        filter = tf.get_variable('filter', filter_shape)
+        filter = tf.get_variable('filter', filter_shape, initializer=tf.contrib.layers.xavier_initializer())
         biases_shape = [shape[-1]]
         biases = tf.get_variable('biases', biases_shape, initializer=tf.zeros_initializer())
         hidden = tf.nn.conv2d(x, filter, strides, padding) + biases
@@ -47,7 +47,7 @@ def conv_layer(x, shape, strides, padding='SAME'):
 def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
     with tf.variable_scope(None, 'conv_modules'):
         filter_shape = [module_count] + list(shape)
-        filter = tf.get_variable('filter', filter_shape)
+        filter = tf.get_variable('filter', filter_shape, initializer=tf.contrib.layers.xavier_initializer())
         biases_shape = [module_count, shape[-1]]
         biases = tf.get_variable('biases', biases_shape, initializer=tf.zeros_initializer())
 
@@ -172,10 +172,10 @@ def variational_mask(inputs, modules: ModulePool, context: ModularContext, eps, 
 
         shape = modules.module_count
         a = tf.get_variable(name='a', dtype=tf.float32, initializer=tf.random_uniform([shape], 
-                                                                                      minval=3.8, maxval=4.2))
+                                                                                      minval=8.8, maxval=9.2))
         b = tf.get_variable(name='b', dtype=tf.float32, initializer=tf.random_uniform([shape], 
                                                                                       minval=1.8, maxval=2.2))
-        u = get_u(shape)
+        u = get_u([shape])
         pi = tf.pow((1 - tf.pow(u, tf.divide(1,b + 1e-20))), tf.divide(1,a + 1e-20))
         
         eta = tf.get_variable(name='eta', shape=[shape], dtype=tf.float32)
@@ -185,51 +185,63 @@ def variational_mask(inputs, modules: ModulePool, context: ModularContext, eps, 
         gamma = tf.get_variable(name='gamma', shape=[shape], dtype=tf.float32)
 
         def dependent_pi(inputs, pi, gamma, beta, eps):
-            with tf.variable_scope('dependent_pi'):
+            with tf.variable_scope('dep_pi', reuse=tf.AUTO_REUSE):
                 stop_input = tf.stop_gradient(inputs)
                 reshape = tf.reshape(stop_input, 
                              [tf.shape(inputs)[0], shape, 
                              tf.cast(tf.divide(tf.shape(inputs)[-1], shape), 
                              tf.int32)])
-                re_sum = tf.reduce_sum(reshape, axis=2)
-                mean, var = tf.nn.moments(re_sum, axes=0, keep_dims=True)
-                new_input = tf.stop_gradient(tf.nn.batch_normalization(re_sum,
-                                                                       mean,
-                                                                       var,
+                dep_input = tf.reduce_sum(reshape, axis=2)
+                mean, var = tf.nn.moments(dep_input, axes=0, keep_dims=True)
+                #Moving Average
+                ema = tf.train.ExponentialMovingAverage(decay=0.99999,
+                                                        zero_debias=False)
+                ema_opt = ema.apply(var_list=[mean, var])
+                mean_avg = ema.average(mean)
+                var_avg = ema.average(var)
+                new_input = tf.stop_gradient(tf.nn.batch_normalization(dep_input,
+                                                                       mean_avg,
+                                                                       var_avg,
                                                                        beta,
                                                                        gamma,
                                                                        0.0001
                                                         ))
                 max_input = tf.maximum(eps, new_input)
-                dep = tf.minimum(1-eps, max_input) + 1e-20
+                dep_pi = tf.minimum(1-eps, max_input) + 1e-20
 
-            return tf.multiply(dep, pi), dep
+                return tf.multiply(dep_pi, pi), dep_pi, ema_opt
 
-        rho = 6.17
         beta_prior = tfd.MultivariateNormalDiag(tf.zeros([shape]), 
                                                 tf.multiply(rho, tf.ones([shape]))
                                                )
 
         final_pi = tf.make_template('dependent_pi', dependent_pi)
-        new_pi, fin_dep = final_pi(flat_inputs, pi, gamma, beta.sample(), eps=0.0001)
+        new_pi, fin_dep, ema_out = final_pi(flat_inputs, pi, gamma, beta.sample(), eps=0.0001)
 
-        tau = 0.1
-        term_1 = tf.log(tf.divide(new_pi, 1-new_pi) + 1e-20)
-        term_2 = tf.log(tf.divide(u, 1-u + 1e-20) + 1e-20)
-        z = tf.sigmoid(tf.multiply(tf.divide(1, tau + 1e-20), term_1 + term_2))
+        tau = 0.001
+        u = get_u(tf.shape(new_pi))
+        term_1 = tf.log(tf.divide(new_pi, 1 - new_pi + 1e-20) + 1e-20)
+        term_2 = tf.log(tf.divide(u, 1 - u + 1e-20) + 1e-20)
+        z = tf.sigmoid(tf.multiply(tf.divide(1, tau), term_1 + term_2))
+        # z = tfd.RelaxedBernoulli(tau, probs=new_pi)
 
-        if context.mode == ModularMode.M_STEP:
-            selection = tf.cast(z, tf.int32)
-        elif context.mode == ModularMode.EVALUATION:
-            test_pi = get_test_selection(a, b)
-            selection = tf.cast(final_pi(flat_inputs, test_pi, gamma, beta.sample(), eps=0.0001)[0], 
-                        dtype=tf.int32)
+        # if context.mode == ModularMode.M_STEP:
+        selection = tf.cast(tf.where(z>0.5,
+                                x=tf.ones_like(z),
+                                y=tf.zeros_like(z)), tf.int32)
+        # elif context.mode == ModularMode.EVALUATION:
+        #     test_pi = get_test_selection(a, b)
+        #     selection = tf.cast(final_pi(flat_inputs, test_pi, gamma, beta.sample(), eps=0.0001)[0], 
+        #                 dtype=tf.int32)
 
 
-        attrs = VariationalLayerAttributes(selection, z, a, b, beta, beta_prior)
-        context.var_layers.append(attrs)
-
-        return run_masked_modules_withloop(inputs, selection, modules.module_fnc, modules.output_shape), new_pi, selection, fin_dep
+        # attrs = ModularLayerAttributes(selection, None, tfd.Bernoulli(probs=new_pi), 
+        #                                 a, b, None, beta, beta_prior)
+        # context.layers.append(attrs)
+        return (run_masked_modules_withloop(inputs, selection, 
+                                            modules.module_fnc, 
+                                            modules.output_shape), 
+                z, selection, ema_out)
 
 
 def new_controller(inputs, modules: ModulePool, context: ModularContext, initializer):
@@ -244,7 +256,7 @@ def new_controller(inputs, modules: ModulePool, context: ModularContext, initial
                                                                                        minval=3.8, maxval=4.2))
         b = tf.get_variable(name='b', dtype=tf.float32, initializer=tf.random_uniform([shape], 
                                                                                       minval=1.8, maxval=2.2))
-        u = get_u(shape)
+        u = get_u([shape])
         pi = tf.pow((1 - tf.pow(u, tf.divide(1,b + 1e-20))), tf.divide(1,a + 1e-20))
         
         input_shape = flat_inputs.shape[-1].value
@@ -262,17 +274,15 @@ def new_controller(inputs, modules: ModulePool, context: ModularContext, initial
                              [tf.shape(inputs)[0], shape, 
                              tf.cast(tf.divide(tf.shape(inputs)[-1], shape), 
                              tf.int32)])
-                re_sum = tf.reduce_sum(reshape, axis=2)
-                mean, var = tf.nn.moments(re_sum, axes=0, keep_dims=True)
+                dep_input = tf.reduce_sum(reshape, axis=2)
+                mean, var = tf.nn.moments(dep_input, axes=0, keep_dims=True)
                 #Moving Average
-                ema = tf.train.ExponentialMovingAverage(decay=0.5,
+                ema = tf.train.ExponentialMovingAverage(decay=0.99999,
                                                         zero_debias=False)
-
                 ema_opt = ema.apply(var_list=[mean, var])
                 mean_avg = ema.average(mean)
                 var_avg = ema.average(var)
-
-                new_input = tf.stop_gradient(tf.nn.batch_normalization(re_sum,
+                new_input = tf.stop_gradient(tf.nn.batch_normalization(dep_input,
                                                                        mean_avg,
                                                                        var_avg,
                                                                        beta,
@@ -280,9 +290,8 @@ def new_controller(inputs, modules: ModulePool, context: ModularContext, initial
                                                                        0.0001
                                                         ))
                 max_input = tf.maximum(eps, new_input)
-                dep = tf.minimum(1-eps, max_input) + 1e-20
-
-                return tf.multiply(dep, pi), dep, ema_opt
+                dep_pi = tf.minimum(1-eps, max_input) + 1e-20
+                return tf.multiply(dep_pi, pi), dep_pi, ema_opt
 
 
         rho = 5.17
@@ -293,7 +302,6 @@ def new_controller(inputs, modules: ModulePool, context: ModularContext, initial
         # temp_pi = tf.make_template('dependent_pi', dependent_pi)
         logits, dep, ema = dependent_pi(flat_inputs, pi, gamma, beta.sample(), eps=0.0001)
 
-
         ctrl_bern = tfd.Bernoulli(probs=logits)
 
         best_shape = [context.dataset_size, modules.module_count]
@@ -302,7 +310,10 @@ def new_controller(inputs, modules: ModulePool, context: ModularContext, initial
 
         if context.mode == ModularMode.E_STEP:
             best_selection = tf.gather(best_selection_persistent, context.data_indices)[tf.newaxis]
-            samples = ctrl_bern.sample()
+            # samples = ctrl_bern.sample()
+            samples = tf.cast(tf.where(logits>0.5,
+                                x=tf.ones_like(logits),
+                                y=tf.zeros_like(logits)), tf.int32)
             sampled_selection = tf.reshape(samples, [context.sample_size, -1, modules.module_count]) 
             selection = tf.concat([best_selection, sampled_selection[1:]], axis=0)
             selection = tf.reshape(selection, [-1, modules.module_count])
@@ -314,13 +325,71 @@ def new_controller(inputs, modules: ModulePool, context: ModularContext, initial
             raise ValueError('Invalid modular mode')
 
         attrs = ModularLayerAttributes(selection, best_selection_persistent, 
-                                       ctrl_bern, a, b, beta, beta_prior)
+                                       ctrl_bern, a, b, logits, beta, beta_prior)
         context.layers.append(attrs) 
+
+        if context.mode==ModularMode.E_STEP:
+            pr =  tf.constant(1, tf.int32)
+        elif context.mode==ModularMode.M_STEP:
+            pr = tf.constant(2, tf.int32)
+        elif context.mode==ModularMode.EVALUATION:
+            pr = tf.constant(3, tf.int32)
+
+
 
         return (run_masked_modules_withloop(inputs, selection, 
                                            modules.module_fnc, 
                                            modules.output_shape), 
-               ema, logits, pi)
+               ema, logits, selection, tf.print(pr, [pr]))
+
+
+def beta_bernoulli_controller(inputs, modules: ModulePool, context: ModularContext, initializer):
+        with tf.variable_scope(None, 'beta_bernoulli_controller'):
+            inputs = context.begin_modular(inputs)
+            flat_inputs = tf.layers.flatten(inputs)
+
+            beta_a = tf.layers.dense(name='beta_a', 
+                                    inputs=flat_inputs,
+                                    units=modules.module_count,
+                                    activation=tf.nn.relu,
+                                    ) + 1e-20
+            beta_b = tf.layers.dense(name='beta_b', 
+                                    inputs=flat_inputs,
+                                    units=modules.module_count,
+                                    activation=tf.nn.relu,
+                                   ) + 1e-20
+
+            shape = tf.shape(beta_a)
+            u = get_u([shape])
+            pi = tf.pow((1 - tf.pow(u, tf.divide(1,beta_b + 1e-20))), tf.divide(1,beta_a + 1e-20)) + 1e-20
+
+            ctrl_bern = tf.distributions.Bernoulli(probs=pi)
+
+            best_shape = [context.dataset_size, modules.module_count]
+            best_selection_persistent = tf.get_variable('best_selection', shape=best_shape, dtype=tf.int32, 
+                                                        initializer=initializer)
+
+            if context.mode == ModularMode.E_STEP:
+                best_selection = tf.gather(best_selection_persistent, context.data_indices)[tf.newaxis]
+                samples = ctrl_bern.sample()
+                sampled_selection = tf.reshape(samples, [context.sample_size, -1, modules.module_count]) 
+                selection = tf.concat([best_selection, sampled_selection[1:]], axis=0)
+                selection = tf.reshape(selection, [-1, modules.module_count])
+            elif context.mode == ModularMode.M_STEP:
+                selection = tf.gather(best_selection_persistent, context.data_indices)
+            elif context.mode == ModularMode.EVALUATION:
+                selection = ctrl_bern.mode()
+            else:
+                raise ValueError('Invalid modular mode')
+
+            attrs = ModularLayerAttributes(selection, best_selection_persistent, 
+                                           ctrl_bern, beta_a, beta_b, pi, beta=None, beta_prior=None)
+
+            context.layers.append(attrs) 
+            return (run_masked_modules_withloop(inputs, selection, 
+                                       modules.module_fnc, 
+                                       modules.output_shape), 
+                    selection, pi, pi)
 
 
 def get_test_selection(a, b):
@@ -331,7 +400,7 @@ def get_test_selection(a, b):
     return tf.divide(numerator, denom)
 
 def get_u(shape):
-    return tf.random_uniform([shape], maxval=1)
+    return tf.random_uniform(shape, maxval=1)
 
 def modularize_target(target, context: ModularContext):
     if context.mode == ModularMode.E_STEP:
@@ -340,12 +409,13 @@ def modularize_target(target, context: ModularContext):
     return target
 
 
-def modularize(template, optimizer, dataset_size, data_indices, sample_size, variational, moving_average):
+def modularize(template, optimizer, dataset_size, data_indices, 
+               sample_size, variational, moving_average):
     e = e_step(template, sample_size, dataset_size, data_indices)
     m = m_step(template, optimizer, dataset_size, data_indices, variational, moving_average)
     return e, m
 
-def modularize_variational(template, optimizer, dataset_size, data_indices, variational):
-    m = m_step(template, optimizer, dataset_size, data_indices, variational)
-    ev = evaluation(template, data_indices)
-    return m, ev
+def modularize_variational(template, optimizer, dataset_size, 
+                          data_indices, variational, moving_average):
+    m = m_step(template, optimizer, dataset_size, data_indices, variational, moving_average)
+    return m

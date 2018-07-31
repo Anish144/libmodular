@@ -9,7 +9,7 @@ import tensorflow as tf
 M_STEP_SUMMARIES = 'M_STEP_SUMMARIES'
 ModularMode = Enum('ModularMode', 'E_STEP M_STEP EVALUATION')
 ModularLayerAttributes = namedtuple('ModularLayerAttributes', 
-                                    ['selection', 'best_selection', 'controller', 'a', 'b', 'beta', 'beta_prior']
+                                    ['selection', 'best_selection', 'controller', 'a', 'b', 'probs', 'beta', 'beta_prior']
                                     )
 VariationalLayerAttributes = namedtuple('ModularLayerAttributes', 
                                     ['selection', 'controller', 'a', 'b', 'beta', 'beta_prior']
@@ -48,8 +48,16 @@ class ModularContext:
         return tf.reduce_mean([layer_entropy(layer) for layer in self.layers])
 
     def selection_logprob(self):
-        x = [tf.reduce_sum(attrs.controller.log_prob(attrs.selection), axis=-1) for attrs in self.layers]
-        return tf.reduce_sum(x, axis=0)
+        with tf.variable_scope('selection_logprob'):
+            def layer_selection_logprob(layer):
+                logprobs = tf.log(layer.probs + 1e-20)
+                log1probs = tf.log(1 - layer.probs + 1e-20)
+                sel = tf.cast(layer.selection, tf.float32)
+                term_1 = tf.multiply(logprobs, sel)
+                term_2 = tf.multiply(log1probs, 1 - sel)
+                return term_1 + term_2
+            x = [tf.reduce_sum(layer_selection_logprob(layer), axis=-1) for layer in self.layers]
+            return tf.reduce_sum(x, axis=0)
 
     def update_best_selection(self, best_selection_indices):
         """
@@ -87,7 +95,7 @@ class ModularContext:
             beta = self.layers[number].beta
             beta_prior = self.layers[number].beta_prior
             term_1 = tf.divide(- b + 1, b)
-            term_2 = tf.log( tf.divide(tf.multiply(a, b), alpha))
+            term_2 = tf.log( tf.divide(tf.multiply(a, b), alpha + 1e-20) + 1e-20)
             term_bracket = (tf.digamma(1.) - tf.digamma(b) - tf.divide(1., b))
             term_3 = tf.multiply(tf.divide(a - alpha, a), term_bracket)
             term_4 = tf.distributions.kl_divergence(beta, beta_prior)
@@ -224,7 +232,7 @@ def run_masked_modules_withloop(inputs, selection, module_fnc, output_shape):
     i = tf.constant(0, tf.int32)
     output = tf.while_loop(condition, compute_module, [tf.zeros(output_shape), used_modules, i])[0]
 
-    return output + inputs
+    return output
 
 def e_step(template, sample_size, dataset_size, data_indices):
     context = ModularContext(ModularMode.E_STEP, data_indices, dataset_size, sample_size)
@@ -248,16 +256,15 @@ def m_step(template, optimizer, dataset_size, data_indices, variational, moving_
 
     if variational == 'False':
         print('NOT VAR')
-        loglikelihood = template(context)[0]
+        loglikelihood = template(context)[0]  
         selection_logprob = context.selection_logprob()
-        KL = context.get_variational_kl(0.1)
+        KL = context.get_variational_kl(0.5)
 
         ctrl_objective = -tf.reduce_mean(selection_logprob)
         module_objective = -tf.reduce_mean(loglikelihood)
+        joint_objective =  -(tf.reduce_mean(selection_logprob + loglikelihood) - KL)
 
-        joint_objective =  -dataset_size*(tf.reduce_mean(selection_logprob + loglikelihood - KL))
-
-        tf.summary.scalar('KL', KL, collections=[M_STEP_SUMMARIES])
+        tf.summary.scalar('KL', tf.reduce_sum(KL), collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('ctrl_objective', ctrl_objective, collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('module_objective', -module_objective, collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
@@ -266,7 +273,7 @@ def m_step(template, optimizer, dataset_size, data_indices, variational, moving_
         loglikelihood = template(context)[0]
         KL = context.get_variational_kl(1.9)
 
-        joint_objective = - (tf.reduce_mean(loglikelihood - KL))
+        joint_objective = - (tf.reduce_mean(loglikelihood)- KL)
 
         tf.summary.scalar('KL', KL, collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
