@@ -30,6 +30,24 @@ def make_handle(sess, dataset):
     handle, _ = sess.run([iterator.string_handle(), iterator.initializer])
     return handle
 
+def get_dataset(x, y, batch_size):
+    data =  tf.data.Dataset.from_tensor_slices((x, y))
+    prepare = data._enumerate().repeat().shuffle(50000)
+    return prepare.batch(batch_size)
+
+def create_summary(list_of_ops_or_op, name, summary_type):
+    summary = getattr(tf.summary, summary_type)
+
+    if type(list_of_ops_or_op) is list:
+        for i in range(len(list_of_ops_or_op)):
+            summary(str(name) + '_' + str(i), list_of_ops_or_op[i])
+
+    elif type(list_of_ops_or_op) is tf.Tensor:
+        summary(str(name), list_of_ops_or_op)
+
+    else:
+        raise TypeError('Invalid type for summary')
+
 
 # noinspection PyProtectedMember
 def run():
@@ -42,16 +60,16 @@ def run():
     batch_size = 250
 
     # Train dataset
-    train = tf.data.Dataset.from_tensor_slices((x_train, 
-                                                y_train)
-                                                )._enumerate().repeat().shuffle(50000).batch(batch_size)
+    train = get_dataset(x_train, y_train, batch_size)
+
     # Test dataset
     test_batch_size = 2000
-    test = tf.data.Dataset.from_tensor_slices((x_test, y_test))._enumerate().repeat().batch(test_batch_size)
+    test = get_dataset(x_test, y_test, test_batch_size)
 
     # Handle to switch between datasets
     handle = tf.placeholder(tf.string, [])
-    itr = tf.data.Iterator.from_string_handle(handle, train.output_types, train.output_shapes)
+    itr = tf.data.Iterator.from_string_handle(
+        handle, train.output_types, train.output_shapes)
     data_indices, (inputs, labels) = itr.get_next()
 
     # Preprocessing
@@ -62,7 +80,9 @@ def run():
     module_count = 8
     masked_bernoulli = False
 
-    def network(context: modular.ModularContext, masked_bernoulli=False, variational=False):
+    def network(context: modular.ModularContext, 
+                masked_bernoulli=False, 
+                variational=False):
         # 4 modular CNN layers
         activation = inputs_tr
         s_log = []
@@ -80,49 +100,64 @@ def run():
         for j in range(2):
             input_channels = activation.shape[-1]
             filter_shape = [3, 3, input_channels, 8]
-            modules = modular.create_conv_modules(filter_shape, module_count, strides=[1, 1, 1, 1])
+            modules = modular.create_conv_modules(filter_shape, 
+                                                  module_count, 
+                                                  strides=[1, 1, 1, 1])
+
             if masked_bernoulli:
                 print('Masked Bernoulli')
-                hidden, l, s  = modular.masked_layer(activation, modules, context,
-                                                     get_initialiser(dataset_size, 5, module_count))
+                hidden, l, s  = modular.masked_layer(
+                    activation, modules, context, 
+                    get_initialiser(dataset_size, 5, module_count))
+
             elif variational == 'True':
                 print('Variational')
-                hidden, l, s, ema_out, pi = modular.variational_mask(activation, modules, context, 0.001, 7.17)
+                hidden, l, s, ema_out, pi = modular.variational_mask(
+                    activation, modules, context, 0.001, 7.17)
                 hidden = modular.batch_norm(hidden)
+
             elif new_controller == 'True':
                 print('New')
-                hidden, ema_out, l, s, pi, bs = modular.new_controller(activation, modules, context, 
-                                                      get_initialiser(dataset_size, 2, module_count), 5.1)
-                hidden = modular.batch_norm(hidden)
+                hidden, ema_out, l, s, pi, bs = modular.new_controller(
+                    activation, modules, context, 
+                    get_initialiser(dataset_size, 2, module_count), 5.1)
+                # hidden = modular.batch_norm(hidden)
+
             elif beta_bernoulli_controller == 'True':
                 print('Beta_Bern')
-                hidden, s, l, _ = modular.beta_bernoulli_controller(activation, modules, context, 
-                                      get_initialiser(dataset_size, 5, module_count))
+                hidden, s, l, _ = modular.beta_bernoulli_controller(
+                    activation, modules, context, 
+                    get_initialiser(dataset_size, 5, module_count))
             else:
                 print('Vanilla')
-                hidden, l, s  = modular.modular_layer(activation, modules, 3, context)
-            ctrl_logits.append(l)
-            s_log.append(s)
+                hidden, l, s  = modular.modular_layer(
+                    activation, modules, 3, context)
+            ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
+            s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
             ema_list.append(ema_out)
             pi_log.append(pi)
-            bs_perst_log.append(bs)
-            pooled = tf.nn.max_pool(hidden, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
+            bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
+            pooled = tf.nn.max_pool(
+                hidden, 
+                ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], 
+                padding='SAME')
             activation = tf.nn.relu(pooled)
 
-
-        modules = modular.create_dense_modules(activation, module_count, units=64,
-                                                activation=tf.nn.relu)
-        # if new_controller == 'True':
-        #     print('New')
-        #     activation, ema_out, l, s, pi, bs = modular.new_controller(activation, modules, context, 
-        #                                           get_initialiser(dataset_size, 2, module_count))
-        #     ctrl_logits.append(l)
-        #     s_log.append(s)
-        #     ema_list.append(ema_out)
-        #     pi_log.append(pi)
-        #     bs_perst_log.append(bs)
-
         flattened = tf.layers.flatten(activation)
+        modules = modular.create_dense_modules(flattened, module_count, units=64,
+                                                activation=tf.nn.relu)
+
+        if new_controller == 'True':
+            print('New')
+            flattened, ema_out, l, s, pi, bs = modular.new_controller(
+                flattened, modules, context, 
+                get_initialiser(dataset_size, 2, module_count), 5.1)
+            ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
+            s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
+            ema_list.append(ema_out)
+            pi_log.append(pi)
+            bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
+
         logits = tf.layers.dense(flattened, units=10)
 
         target = modular.modularize_target(labels_cast, context)
@@ -134,8 +169,9 @@ def run():
         selection_entropy = context.selection_entropy()
         batch_selection_entropy = context.batch_selection_entropy()
 
-        return (loglikelihood, logits, accuracy, batch_selection_entropy, selection_entropy,
-                tf.group(ema_list), ctrl_logits, s_log, context, pi_log, bs_perst_log)
+        return (loglikelihood, logits, accuracy, batch_selection_entropy, 
+                selection_entropy, tf.group(ema_list), ctrl_logits, s_log, 
+                context, pi_log, bs_perst_log)
 
     template = tf.make_template('network', network, masked_bernoulli=masked_bernoulli, 
                                 variational=variational)
@@ -160,40 +196,26 @@ def run():
 
     #Summaries
     params = context.layers
-    for i in range(len(params)):
-        a = params[i].a
-        b = params[i].b
-        tf.summary.histogram('a_' + str(i), a)
-        tf.summary.histogram('b_' + str(i), b)
+    a_list = [l.a for l in params]
+    b_list = [l.b for l in params]
 
-    for i in range(len(pi_log)):
-        tf.summary.histogram('pi_' + str(i), pi_log[i])
-        pi_im = tf.reshape(pi_log[i], [1,-1,module_count,1])
-        tf.summary.image('pi_' + str(i), pi_im, max_outputs=1)
+    create_summary(a_list, 'a', 'histogram')
+    create_summary(b_list, 'b', 'histogram')
+    create_summary(pi_log, 'pi', 'histogram')
+    create_summary(ctrl_logits, 'Controller_probs', 'image')
+    create_summary(s_log, 'Selection', 'image')
+    create_summary(bs_perst_log, 'Best_selection', 'image')
 
-    for i in range(len(ctrl_logits)):
-        l = tf.reshape(ctrl_logits[i], [1,-1,module_count,1])
-        tf.summary.image('l' + str(i) + '_controller_probs', l, max_outputs=1)
-
-    for i in range(len(s_log)):
-        s = tf.reshape(s_log[i] , [1,-1,module_count,1])
-        tf.summary.image('selection_'+ str(i), tf.cast(s, dtype=tf.float32), max_outputs=1)
-
-    if new_controller == 'True':
-        for i in range(len(bs_perst_log)):
-            bs = tf.reshape(bs_perst_log[i] , [1,-1,module_count,1])
-            tf.summary.image('best_selection_perst_'+ str(i), tf.cast(bs, dtype=tf.float32), max_outputs=1)
-
-    tf.summary.scalar('loglikelihood', tf.reduce_mean(ll))
-    tf.summary.scalar('accuracy', accuracy)
-    tf.summary.scalar('entropy/exp_selection', tf.exp(s_entropy))
-    tf.summary.scalar('entropy/exp_batch_selection', tf.exp(bs_entropy))
+    create_summary(tf.reduce_mean(ll), 'loglikelihood', 'scalar')
+    create_summary(accuracy, 'accuracy', 'scalar')
+    create_summary(tf.exp(s_entropy), 'entropy/exp_selection', 'scalar')
+    create_summary(tf.exp(bs_entropy), 'entropy/exp_batch_selection', 'scalar')
 
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
 
     with tf.Session(config=config) as sess:
-        sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+        # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
 
         if REALRUN=='True':
@@ -201,7 +223,8 @@ def run():
         #     test_writer = tf.summary.FileWriter(f'logs/test:Cifar10_16m_ADDED_Moving_average:0.99999_TNOINPUTADD_NOESTEP_:alpha:0.5_Initial_a=3.8-4.2,b=1.8-2.2_lr:0.001:'+f'_{time}', sess.graph)
             # writer = tf.summary.FileWriter(f'logs/train:Cifar10_Variational_moving_FIX_alpha=1.9_a=3.8-4.2,b=1.8-2.2_{time}')
             # test_writer = tf.summary.FileWriter(f'logs/test:Cifar10_Variational_moving_FIX_alpha=1.9_a=3.8-4.2,b=1.8-2.2_{time}')
-            writer = tf.summary.FileWriter(f'logs/train:Cifar10_ADDED_ctrl_3layer+1denseodular_layer_FULLTEST_{time}', sess.graph)
+            writer = tf.summary.FileWriter(
+                f'logs/train:Cifar10_ADDED_ctrl_3layer +1denseodular_layer_FULLTEST_{time}', sess.graph)
             test_writer = tf.summary.FileWriter(f'logs/test:Cifar10_ADDED_ctrl_3layer+1denseodular_layer_FULLTEST_{time}', sess.graph)
             # writer = tf.summary.FileWriter(f'logs/train:Variational_check_3layer_alpha:2.0_REDUCED_+ADD_Fixed_test_selection_{time}', sess.graph)
             # test_writer = tf.summary.FileWriter(f'logs/test:Variational_check_3layer_alpha:2.0_REDUCED_+ADD_Fixed_test_selection_{time}', sess.graph)
@@ -231,9 +254,10 @@ def run():
             # Sometimes generate summaries
             if i % 100 == 0: 
                 summaries = m_step_summaries
-                _, summary_data, test_accuracy, log, s = sess.run([step, summaries, accuracy, 
-                                                                       ctrl_logits[0], s_log[0] 
-                                                                       ], train_dict)
+                _, summary_data, test_accuracy, log, s = sess.run(
+                    [step, summaries, accuracy, ctrl_logits[0], s_log[0]], 
+                    train_dict)
+
                 # non_zeros = np.zeros((log.shape[0], log.shape[1]))
                 # j=0
                 # for i in log:
@@ -257,7 +281,8 @@ def run():
                         accuracy_log.append(test_accuracy)
                     final_accuracy = np.mean(accuracy_log)
                     summary = tf.Summary()
-                    summary.value.add(tag='Test Accuracy', simple_value = final_accuracy)
+                    summary.value.add(tag='Test Accuracy', 
+                                      simple_value = final_accuracy)
                     test_writer.add_summary(summary, global_step=i)
 
 

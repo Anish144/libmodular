@@ -391,7 +391,9 @@ def new_controller(
                )
 
 
-def beta_bernoulli_controller(inputs, modules: ModulePool, context: ModularContext, initializer):
+def beta_bernoulli_controller(
+    inputs, modules: ModulePool, 
+    context: ModularContext, initializer):
         with tf.variable_scope(None, 'beta_bernoulli_controller'):
             inputs = context.begin_modular(inputs)
             flat_inputs = tf.layers.flatten(inputs)
