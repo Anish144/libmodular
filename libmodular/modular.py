@@ -9,7 +9,9 @@ import tensorflow as tf
 M_STEP_SUMMARIES = 'M_STEP_SUMMARIES'
 ModularMode = Enum('ModularMode', 'E_STEP M_STEP EVALUATION')
 ModularLayerAttributes = namedtuple('ModularLayerAttributes', 
-                                    ['selection', 'best_selection', 'controller', 'a', 'b', 'probs', 'beta', 'beta_prior']
+                                    ['selection', 'best_selection', 
+                                    'controller', 'a', 'b', 'probs', 'beta', 
+                                    'beta_prior', 'eta', 'khi', 'gamma']
                                     )
 VariationalLayerAttributes = namedtuple('ModularLayerAttributes', 
                                     ['selection', 'controller', 'a', 'b', 'beta', 'beta_prior']
@@ -90,16 +92,16 @@ class ModularContext:
 
     def get_variational_kl(self, alpha):
         def get_layer_KL(number):
-            a = self.layers[number].a
-            b = self.layers[number].b
-            beta = self.layers[number].beta
-            beta_prior = self.layers[number].beta_prior
+            a = tf.stop_gradient(self.layers[number].a)
+            b = tf.stop_gradient(self.layers[number].b)
+            # beta = self.layers[number].beta
+            # beta_prior = self.layers[number].beta_prior
             term_1 = tf.divide(- b + 1, b)
             term_2 = tf.log( tf.divide(tf.multiply(a, b), alpha + 1e-20) + 1e-20)
             term_bracket = (tf.digamma(1.) - tf.digamma(b) - tf.divide(1., b))
             term_3 = tf.multiply(tf.divide(a - alpha, a), term_bracket)
-            term_4 = tf.distributions.kl_divergence(beta, beta_prior)
-            return tf.reduce_sum(term_1 + term_2 + term_3) + term_4
+            # term_4 = tf.distributions.kl_divergence(beta, beta_prior)
+            return tf.reduce_sum(term_1 + term_2 + term_3)
         return tf.reduce_sum([get_layer_KL(i) for i in range(len(self.layers))])
 
 
@@ -186,7 +188,7 @@ def run_masked_modules(inputs, selection, module_fnc, output_shape, ):
     def compute_module(accum, module):
 
         inputs_considered = tf.slice(selection, [0, module], [batch_size,1])
-        mask = tf.reshape(tf.equal(1, inputs_considered), [-1])
+        mask = tf.reshape(tf.equal(1., inputs_considered), [-1])
         indices = tf.where(mask)
         affected_inp = tf.boolean_mask(inputs, mask)
 
@@ -217,7 +219,7 @@ def run_masked_modules_withloop(inputs, selection, module_fnc, output_shape):
 
         module = tf.slice(used_module, [i], [1])
         inputs_considered = tf.slice(selection, [0, module[0]], [batch_size, 1])
-        mask = tf.reshape(tf.equal(1, inputs_considered), [-1])
+        mask = tf.reshape(tf.equal(1.,inputs_considered), [-1])
         indices = tf.where(mask)
         affected_inp = tf.boolean_mask(inputs, mask)
 
@@ -262,7 +264,7 @@ def m_step(template, optimizer, dataset_size, data_indices, variational, moving_
 
         ctrl_objective = -tf.reduce_mean(selection_logprob)
         module_objective = -tf.reduce_mean(loglikelihood)
-        joint_objective =  -(tf.reduce_mean(selection_logprob + loglikelihood) - KL)
+        joint_objective =  -(tf.reduce_mean(selection_logprob + loglikelihood - KL))
 
         tf.summary.scalar('KL', tf.reduce_sum(KL), collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('ctrl_objective', ctrl_objective, collections=[M_STEP_SUMMARIES])
@@ -291,7 +293,7 @@ def evaluation(template, data_indices, dataset_size):
     return template(context)
 
 def get_unique_modules(selection):
-    ones = tf.equal(1,selection)
+    ones = tf.equal(1.,selection)
     b,m = tf.shape(ones)[0],  tf.shape(ones)[1]
     modules_idx = tf.range(m)
     tiled = tf.tile(modules_idx, [b])

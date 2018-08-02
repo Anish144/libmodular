@@ -97,7 +97,7 @@ def run():
         #     filter_shape = [3, 3, input_channels, 8]
         #     activation = modular.conv_layer(activation, filter_shape, strides=[1,1,1,1])
 
-        for j in range(2):
+        for j in range(1):
             input_channels = activation.shape[-1]
             filter_shape = [3, 3, input_channels, 8]
             modules = modular.create_conv_modules(filter_shape, 
@@ -112,7 +112,7 @@ def run():
 
             elif variational == 'True':
                 print('Variational')
-                hidden, l, s, ema_out, pi = modular.variational_mask(
+                hidden, l, s, ema_out, pi, bs = modular.variational_mask(
                     activation, modules, context, 0.001, 7.17)
                 hidden = modular.batch_norm(hidden)
 
@@ -147,16 +147,22 @@ def run():
         modules = modular.create_dense_modules(flattened, module_count, units=64,
                                                 activation=tf.nn.relu)
 
-        if new_controller == 'True':
-            print('New')
-            flattened, ema_out, l, s, pi, bs = modular.new_controller(
-                flattened, modules, context, 
-                get_initialiser(dataset_size, 2, module_count), 5.1)
-            ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
-            s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
-            ema_list.append(ema_out)
-            pi_log.append(pi)
-            bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
+        # if new_controller == 'True':
+        #     print('New')
+        #     flattened, ema_out, l, s, pi, bs = modular.new_controller(
+        #         flattened, modules, context, 
+        #         get_initialiser(dataset_size, 2, module_count), 5.1)
+        # if variational == 'True':
+        #     print('New')
+        #     flattened, l, s, ema_out, pi, bs = modular.variational_mask(
+        #         flattened, modules, context, 
+        #         0.0001, 5.1)
+
+        ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
+        s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
+        ema_list.append(ema_out)
+        pi_log.append(pi)
+        bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
 
         logits = tf.layers.dense(flattened, units=10)
 
@@ -176,10 +182,17 @@ def run():
     template = tf.make_template('network', network, masked_bernoulli=masked_bernoulli, 
                                 variational=variational)
 
-    (ll, logits, accuracy, bs_entropy, s_entropy, ema_opt, 
-    ctrl_logits, s_log, context, pi_log, bs_perst_log) = modular.evaluation(                                                            template,
-                                                                data_indices,
-                                                                dataset_size)
+    (ll, logits, 
+    accuracy, 
+    bs_entropy, 
+    s_entropy, 
+    ema_opt, 
+    ctrl_logits, 
+    s_log, 
+    context, 
+    pi_log, bs_perst_log) = modular.evaluation(template,
+                                               data_indices,
+                                               dataset_size)
 
     with tf.control_dependencies([ema_opt]):
         optimizer = tf.train.AdamOptimizer(learning_rate=0.001)
@@ -198,9 +211,17 @@ def run():
     params = context.layers
     a_list = [l.a for l in params]
     b_list = [l.b for l in params]
+    eta_list = [l.eta for l in params]
+    khi_list = [l.khi for l in params]
+    gamma_list = [l.gamma for l in params]
+
 
     create_summary(a_list, 'a', 'histogram')
     create_summary(b_list, 'b', 'histogram')
+    create_summary(eta_list, 'eta', 'histogram')
+    create_summary(khi_list, 'khi', 'histogram')
+    create_summary(gamma_list, 'gamma', 'histogram')
+
     create_summary(pi_log, 'pi', 'histogram')
     create_summary(ctrl_logits, 'Controller_probs', 'image')
     create_summary(s_log, 'Selection', 'image')
@@ -223,11 +244,14 @@ def run():
         #     test_writer = tf.summary.FileWriter(f'logs/test:Cifar10_16m_ADDED_Moving_average:0.99999_TNOINPUTADD_NOESTEP_:alpha:0.5_Initial_a=3.8-4.2,b=1.8-2.2_lr:0.001:'+f'_{time}', sess.graph)
             # writer = tf.summary.FileWriter(f'logs/train:Cifar10_Variational_moving_FIX_alpha=1.9_a=3.8-4.2,b=1.8-2.2_{time}')
             # test_writer = tf.summary.FileWriter(f'logs/test:Cifar10_Variational_moving_FIX_alpha=1.9_a=3.8-4.2,b=1.8-2.2_{time}')
+            # writer = tf.summary.FileWriter(
+            #     f'logs/train:Cifar10_ADDED_ctrl_3layer +1denseodular_layer_FULLTEST_{time}', sess.graph)
+            # test_writer = tf.summary.FileWriter(
+            #     f'logs/test:Cifar10_ADDED_ctrl_3layer+1denseodular_layer_FULLTEST_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_ADDED_ctrl_3layer +1denseodular_layer_FULLTEST_{time}', sess.graph)
-            test_writer = tf.summary.FileWriter(f'logs/test:Cifar10_ADDED_ctrl_3layer+1denseodular_layer_FULLTEST_{time}', sess.graph)
-            # writer = tf.summary.FileWriter(f'logs/train:Variational_check_3layer_alpha:2.0_REDUCED_+ADD_Fixed_test_selection_{time}', sess.graph)
-            # test_writer = tf.summary.FileWriter(f'logs/test:Variational_check_3layer_alpha:2.0_REDUCED_+ADD_Fixed_test_selection_{time}', sess.graph)
+                f'logs/train:Variational_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1_nostopgrads__withetakhigamma{time}', sess.graph)
+            test_writer = tf.summary.FileWriter(
+                f'logs/test:Variational_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1__nostopgrads__withetakhigamma{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
@@ -254,7 +278,7 @@ def run():
             # Sometimes generate summaries
             if i % 100 == 0: 
                 summaries = m_step_summaries
-                _, summary_data, test_accuracy, log, s = sess.run(
+                _, summary_data, test_accuracy, log, select = sess.run(
                     [step, summaries, accuracy, ctrl_logits[0], s_log[0]], 
                     train_dict)
 

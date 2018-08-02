@@ -155,7 +155,9 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext, initializ
         context.layers.append(attrs)
         return run_masked_modules_withloop(inputs, selection, modules.module_fnc, modules.output_shape), logits, best_selection_persistent
 
-def variational_mask(inputs, modules: ModulePool, context: ModularContext, eps, rho):
+def variational_mask(
+    inputs, modules: ModulePool, 
+    context: ModularContext, eps, rho):
     """
     Constructs a Bernoulli masked layer that outputs sparse binary masks dependent on the input
     Based on the Adaptive network Sparsification paper
@@ -167,16 +169,23 @@ def variational_mask(inputs, modules: ModulePool, context: ModularContext, eps, 
     """
     with tf.variable_scope(None, 'variational_mask'):
 
-        flat_inputs = tf.layers.flatten(inputs)
+        flat_inputs = tf.stop_gradient(tf.layers.flatten(inputs))
         input_shape = flat_inputs.shape[-1].value
 
         shape = modules.module_count
-        a = tf.get_variable(name='a', dtype=tf.float32, initializer=tf.random_uniform([shape], 
-                                                                                      minval=8.8, maxval=10.2))
-        b = tf.get_variable(name='b', dtype=tf.float32, initializer=tf.random_uniform([shape], 
-                                                                                      minval=0.3, maxval=0.5))
-        u = get_u([shape])
-        pi = tf.pow((1 - tf.pow(u, tf.divide(1,b + 1e-20))), tf.divide(1,a + 1e-20))
+        input_shape = flat_inputs.shape[-1].value
+        u_shape = [tf.shape(flat_inputs)[0], shape]
+
+        a = tf.get_variable(name='a', 
+                            dtype=tf.float32, 
+                            initializer=tf.random_uniform([shape], 
+                                                          minval=2.9, maxval=20.1))
+        b = tf.get_variable(name='b', 
+                            dtype=tf.float32, 
+                            initializer=tf.random_uniform([shape], 
+                                                          minval=2.9, maxval=20.1))
+
+        pi = get_pi(a, b, u_shape)
         
         eta = tf.get_variable(name='eta', shape=[shape], dtype=tf.float32)
         khi = tf.get_variable(name='khi', shape=[shape], dtype=tf.float32)
@@ -199,23 +208,27 @@ def variational_mask(inputs, modules: ModulePool, context: ModularContext, eps, 
                 ema_opt = ema.apply(var_list=[mean, var])
                 mean_avg = ema.average(mean)
                 var_avg = ema.average(var)
-                new_input = tf.stop_gradient(tf.nn.batch_normalization(dep_input,
-                                                                       mean_avg,
-                                                                       var_avg,
-                                                                       beta,
-                                                                       gamma,
-                                                                       0.0001
-                                                        ))
+                new_input = tf.nn.batch_normalization(dep_input,
+                                                       mean_avg,
+                                                       var_avg,
+                                                       beta,
+                                                       gamma,
+                                                       0.0001
+                                                        )
                 max_input = tf.maximum(eps, new_input)
                 dep_pi = tf.minimum(1-eps, max_input) + 1e-20
                 return tf.multiply(dep_pi, pi), dep_pi, ema_opt
 
         beta_prior = tfd.MultivariateNormalDiag(tf.zeros([shape]), 
-                                                tf.multiply(rho, tf.ones([shape]))
+                                                tf.multiply(rho, 
+                                                            tf.ones([shape]))
                                                )
 
         final_pi = tf.make_template('dependent_pi', dependent_pi)
-        new_pi, fin_dep, ema_out = final_pi(flat_inputs, pi, gamma, beta.sample(), eps=0.0001)
+        new_pi, fin_dep, ema_out = final_pi(flat_inputs, 
+                                            pi, gamma, 
+                                            beta.sample(), 
+                                            eps=0.0001)
 
         tau = 0.001
         u = get_u(tf.shape(new_pi))
@@ -223,25 +236,32 @@ def variational_mask(inputs, modules: ModulePool, context: ModularContext, eps, 
         term_2 = tf.log(tf.divide(u, 1 - u + 1e-20) + 1e-20)
         z = tf.sigmoid(tf.multiply(tf.divide(1, tau), term_1 + term_2))
 
+        g = tf.get_default_graph()
+
         if context.mode == ModularMode.M_STEP:
             test_pi = pi
-            selection = tf.cast(tf.where(z>0.5,
-                                    x=tf.ones_like(z),
-                                    y=tf.zeros_like(z)), tf.int32)
+            with g.gradient_override_map({"Round": "Identity"}):
+                selection = tf.round(z)
+
         elif context.mode == ModularMode.EVALUATION:
             test_pi = get_test_pi(a, b)
-            selection = final_pi(flat_inputs, test_pi, gamma, beta.sample(), eps=0.0001)[0]
-            selection = tf.cast(tf.where(selection>0.5,
-                                    x=tf.ones_like(z),
-                                    y=tf.zeros_like(z)), tf.int32)
+            selection = final_pi(flat_inputs, 
+                                test_pi, gamma, 
+                                beta.sample(), 
+                                eps=0.0001)[0]
+            with g.gradient_override_map({"Round": "Identity"}):
+                selection = tf.round(selection)
 
-        attrs = ModularLayerAttributes(selection, None, tfd.Bernoulli(probs=new_pi), 
-                                        a, b, None, beta, beta_prior)
+        attrs = ModularLayerAttributes(selection, 
+                                        None, tfd.Bernoulli(probs=new_pi), 
+                                        a, b, None, beta, beta_prior,
+                                        eta, khi, gamma)
         context.layers.append(attrs)
-        return (run_masked_modules_withloop(inputs, selection, 
-                                            modules.module_fnc, 
-                                            modules.output_shape), 
-                new_pi, selection, ema_out, test_pi)
+
+        return (run_masked_modules(inputs, selection, 
+                                    modules.module_fnc, 
+                                    modules.output_shape), 
+                new_pi, selection, ema_out, test_pi, z)
 
 
 def new_controller(
@@ -377,12 +397,13 @@ def new_controller(
         attrs = ModularLayerAttributes(selection, 
                                        best_selection_persistent, 
                                        ctrl_bern, a, b, 
-                                       logits, beta, beta_prior)
+                                       logits, beta, beta_prior,
+                                       eta, khi, gamma)
         context.layers.append(attrs)
 
-        return (run_masked_modules_withloop(inputs, selection, 
-                                           modules.module_fnc, 
-                                           modules.output_shape), 
+        return (run_masked_modules(inputs, selection, 
+                                   modules.module_fnc, 
+                                   modules.output_shape), 
                ema, 
                logits, 
                selection, 
@@ -449,19 +470,21 @@ def beta_bernoulli_controller(
 
 
 def get_test_pi(a, b):
-    denom = tf.exp(tf.lgamma(1 + tf.pow(a,-1) + b))
-    term_1 = tf.exp(tf.lgamma(1 + tf.pow(a,-1)))
-    term_2 = tf.multiply(b, tf.exp(tf.lgamma(b)))
-    numerator = tf.multiply(term_1, term_2)
-    return tf.divide(numerator, denom)
+    with tf.variable_scope('test_pi'):
+        denom = tf.exp(tf.lgamma(1 + tf.pow(a,-1) + b))
+        term_1 = tf.exp(tf.lgamma(1 + tf.pow(a,-1)))
+        term_2 = tf.multiply(b, tf.exp(tf.lgamma(b)))
+        numerator = tf.multiply(term_1, term_2)
+        return tf.divide(numerator, denom)
 
 def get_pi(a, b, u_shape):
-    u = get_u(u_shape)
-    term_b = tf.divide(1,b + 1e-20)
-    term_a = tf.divide(1,a + 1e-20)
-    pow_1 = tf.pow(u, term_b)
-    pow_2 = tf.pow(1-pow_1, term_a)
-    return pow_2
+    with tf.variable_scope('train_pi'):
+        u = get_u(u_shape)
+        term_b = tf.divide(1,b + 1e-20)
+        term_a = tf.divide(1,a + 1e-20)
+        pow_1 = tf.pow(u, term_b)
+        pow_2 = tf.pow(1-pow_1, term_a)
+        return pow_2
 
 def get_u(shape):
     return tf.random_uniform(shape, maxval=1)
