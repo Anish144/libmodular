@@ -114,7 +114,7 @@ def run():
                 print('Variational')
                 hidden, l, s, pi, bs = modular.variational_mask(
                     activation, modules, context, 0.001, 7.17)
-                hidden = modular.batch_norm(hidden)
+                # hidden = modular.batch_norm(hidden)
 
             elif new_controller == 'True':
                 print('New')
@@ -215,7 +215,7 @@ def run():
     config.gpu_options.allow_growth = True
 
     with tf.Session(config=config) as sess:
-        sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+        # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
 
         if REALRUN=='True':
