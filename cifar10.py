@@ -177,14 +177,12 @@ def run():
     optimizer = tf.train.AdamOptimizer(learning_rate=0.001)
 
     if variational == 'False':
-        e_step, m_step = modular.modularize(template, optimizer, dataset_size,
+        e_step, m_step, eval = modular.modularize(template, optimizer, dataset_size,
                                                   data_indices, sample_size=10, 
-                                                  variational=variational, 
-                                                  moving_average=create_ema_opt())
+                                                  variational=variational)
     else:
-        m_step = modular.modularize_variational(template, optimizer, dataset_size,
-                                                  data_indices, variational,
-                                                  moving_average=create_ema_opt())
+        m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
+                                                  data_indices, variational)
 
     #Summaries
     params = context.layers
@@ -215,7 +213,7 @@ def run():
     config.gpu_options.allow_growth = True
 
     with tf.Session(config=config) as sess:
-        # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+        sess = tf_debug.LocalCLIDebugWrapperSession(sess)
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
 
         if REALRUN=='True':

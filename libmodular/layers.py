@@ -508,17 +508,18 @@ def modularize_target(target, context: ModularContext):
 
 
 def modularize(template, optimizer, dataset_size, data_indices, 
-               sample_size, variational, moving_average):
+               sample_size, variational):
     e = e_step(template, sample_size, dataset_size, data_indices)
     m = m_step(template, optimizer, dataset_size, 
-               data_indices, variational, moving_average)
+               data_indices, variational)
     return e, m
 
 def modularize_variational(template, optimizer, dataset_size, 
-                          data_indices, variational, moving_average):
+                          data_indices, variational):
     m = m_step(template, optimizer, dataset_size, data_indices, 
-               variational, moving_average)
-    return m
+               variational)
+    eval = evaluation(template, data_indices, dataset_size)
+    return m, eval
 
 def create_ema_opt():
     return tf.group(*tf.get_collection('ema'))

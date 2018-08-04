@@ -96,10 +96,10 @@ class ModularContext:
             b = self.layers[number].b
             # beta = self.layers[number].beta
             # beta_prior = self.layers[number].beta_prior
-            term_1 = tf.divide(- b + 1, b)
+            term_1 = tf.divide(- b + 1, b + 1e-20)
             term_2 = tf.log( tf.divide(tf.multiply(a, b), alpha + 1e-20) + 1e-20)
-            term_bracket = (tf.digamma(1.) - tf.digamma(b) - tf.divide(1., b))
-            term_3 = tf.multiply(tf.divide(a - alpha, a), term_bracket)
+            term_bracket = (tf.digamma(1.) - tf.digamma(b) - tf.divide(1., b + 1e-20))
+            term_3 = tf.multiply(tf.divide(a - alpha, a + 1e-20), term_bracket)
             # term_4 = tf.distributions.kl_divergence(beta, beta_prior)
             return tf.reduce_sum(term_1 + term_2 + term_3)
         return tf.reduce_sum([get_layer_KL(i) for i in range(len(self.layers))])
@@ -253,7 +253,7 @@ def e_step(template, sample_size, dataset_size, data_indices):
     return context.update_best_selection(best_selection_indices)
 
 
-def m_step(template, optimizer, dataset_size, data_indices, variational, moving_average):
+def m_step(template, optimizer, dataset_size, data_indices, variational):
     context = ModularContext(ModularMode.M_STEP, data_indices, dataset_size)
 
     if variational == 'False':

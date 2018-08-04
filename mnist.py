@@ -5,6 +5,7 @@ import numpy as np
 import libmodular as modular
 import observations
 from tqdm import tqdm
+from tensorflow.python import debug as tf_debug
 
 import numpy as np
 from libmodular.modular import create_m_step_summaries, M_STEP_SUMMARIES
@@ -55,10 +56,10 @@ def run():
     labels = tf.placeholder(tf.int32, [None], 'labels')
     data_indices = tf.placeholder(tf.int32, [None], 'data_indices') #Labels the batch...
 
-    module_count = 16
-    variational = 'False'
+    module_count = 8
+    variational = 'True'
     masked_bernoulli = False
-    new_controller = True
+    new_controller = False
 
     def network(context: modular.ModularContext, masked_bernoulli=False, variational=variational):
         """
@@ -82,16 +83,16 @@ def run():
         elif variational == 'True':
 
             modules = modular.create_dense_modules(inputs, module_count, units=128, activation=tf.nn.relu) 
-            hidden, l1, bs_1 = modular.variational_mask(inputs, modules, context, 0.001, 3.17) #[sample * B x units]
+            hidden, l1, bs_1,_, _ = modular.variational_mask(inputs, modules, context, 0.001, 3.17) #[sample * B x units]
 
-            modules = modular.create_dense_modules(hidden, module_count, units=64, activation=tf.nn.relu) 
-            hidden, l2, bs_2 = modular.variational_mask(hidden, modules, context, 0.001, 3.17) #[sample * B x units]
+            # modules = modular.create_dense_modules(hidden, module_count, units=64, activation=tf.nn.relu) 
+            # hidden, l2, bs_2 = modular.variational_mask(hidden, modules, context, 0.001, 3.17) #[sample * B x units]
 
-            modules = modular.create_dense_modules(hidden, module_count, units=32, activation=tf.nn.relu) 
-            hidden, l3, bs_3 = modular.variational_mask(hidden, modules, context, 0.001, 3.17) #[sample * B x units]
+            # modules = modular.create_dense_modules(hidden, module_count, units=32, activation=tf.nn.relu) 
+            # hidden, l3, bs_3 = modular.variational_mask(hidden, modules, context, 0.001, 3.17) #[sample * B x units]
 
             modules = modular.create_dense_modules(hidden, module_count, units=10) 
-            logits, l4, bs_4 = modular.variational_mask(hidden, modules, context, 0.001, 3.17) #[sample * B x units]
+            logits, l4, bs_4,_, _ = modular.variational_mask(hidden, modules, context, 0.001, 3.17) #[sample * B x units]
 
         elif new_controller:
 
@@ -131,20 +132,20 @@ def run():
         selection_entropy = context.selection_entropy()
         batch_selection_entropy = context.batch_selection_entropy()
 
-        return loglikelihood, logits, accuracy, selection_entropy, batch_selection_entropy, bs_1, bs_2, bs_3, bs_4, l1, l2, l3, l4
+        return loglikelihood, logits, accuracy, selection_entropy, batch_selection_entropy, bs_1,  bs_4, l1, l4
 
     #make template: create function and partially evaluate it, create variables the first time then
     #reuse them, better than using autoreuse=True in the scope
     template = tf.make_template('network', network, masked_bernoulli=masked_bernoulli, variational=variational)
     optimizer = tf.train.AdamOptimizer()
 
-    if variational:
+    if variational == 'True':
         m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
-                                                  data_indices, variational=variational)
+                                                  data_indices, variational)
     else:
         e_step, m_step, eval = modular.modularize(template, optimizer, dataset_size,
                                                   data_indices, sample_size=10, variational=variational)
-    ll, logits, accuracy, s_entropy, bs_entropy, bs_1, bs_2, bs_3, bs_4, l1, l2, l3, l4 = eval
+    ll, logits, accuracy, s_entropy, bs_entropy, bs_1, bs_4, l1,  l4 = eval
 
     # bs_1 = tf.reshape(bs_1, [1,-1,module_count,1])
     # bs_2 = tf.reshape(bs_2, [1,-1,module_count,1])
@@ -152,8 +153,8 @@ def run():
     # bs_4 = tf.reshape(bs_4, [1,-1,module_count,1])
 
     l1_re = tf.reshape(tf.cast(l1, tf.float32), [1,-1,module_count,1])
-    l2_re = tf.reshape(tf.cast(l2, tf.float32), [1,-1,module_count,1])
-    l3_re = tf.reshape(tf.cast(l3, tf.float32), [1,-1,module_count,1])
+    # l2_re = tf.reshape(tf.cast(l2, tf.float32), [1,-1,module_count,1])
+    # l3_re = tf.reshape(tf.cast(l3, tf.float32), [1,-1,module_count,1])
     l4_re = tf.reshape(tf.cast(l4, tf.float32), [1,-1,module_count,1])
 
     # tf.summary.image('best_selection_1', tf.cast(bs_1, dtype=tf.float32), max_outputs=1)
@@ -162,8 +163,8 @@ def run():
     # tf.summary.image('best_selection_4', tf.cast(bs_4, dtype=tf.float32), max_outputs=1)
 
     tf.summary.image('l1_controller_probs', l1_re, max_outputs=1)
-    tf.summary.image('l2_controller_probs', l2_re, max_outputs=1)
-    tf.summary.image('l3_controller_probs', l3_re, max_outputs=1)
+    # tf.summary.image('l2_controller_probs', l2_re, max_outputs=1)
+    # tf.summary.image('l3_controller_probs', l3_re, max_outputs=1)
     tf.summary.image('l4_controller_probs', l4_re, max_outputs=1)
 
     tf.summary.scalar('loglikelihood', tf.reduce_mean(ll))
@@ -174,6 +175,7 @@ def run():
     try:
         with tf.Session() as sess:
             time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
+            sess = tf_debug.LocalCLIDebugWrapperSession(sess)
 
             if REALRUN=='True':
                 writer = tf.summary.FileWriter(f'logs/train:_16m_New_added_ctrl_Initial:20-30_alpha:0.1_{time}',
@@ -185,7 +187,7 @@ def run():
             sess.run(tf.global_variables_initializer())
 
             # Initial e-step
-            if not variational:
+            if variational == 'False':
                 feed_dict = {
                         inputs: x_train,
                         labels: y_train,
@@ -200,7 +202,7 @@ def run():
                     labels: batch_y,
                     data_indices: indices,
                 }
-                if variational:
+                if variational == 'True':
                     step = m_step
                 else:
                     step = e_step if i % 10 == 0 else m_step
