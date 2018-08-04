@@ -92,8 +92,8 @@ class ModularContext:
 
     def get_variational_kl(self, alpha):
         def get_layer_KL(number):
-            a = tf.stop_gradient(self.layers[number].a)
-            b = tf.stop_gradient(self.layers[number].b)
+            a = self.layers[number].a
+            b = self.layers[number].b
             # beta = self.layers[number].beta
             # beta_prior = self.layers[number].beta_prior
             term_1 = tf.divide(- b + 1, b)
@@ -188,7 +188,7 @@ def run_masked_modules(inputs, selection, module_fnc, output_shape, ):
     def compute_module(accum, module):
 
         inputs_considered = tf.slice(selection, [0, module], [batch_size,1])
-        mask = tf.reshape(tf.equal(1., inputs_considered), [-1])
+        mask = tf.reshape(tf.equal(1, inputs_considered), [-1])
         indices = tf.where(mask)
         affected_inp = tf.boolean_mask(inputs, mask)
 
@@ -268,22 +268,25 @@ def m_step(template, optimizer, dataset_size, data_indices, variational, moving_
 
         tf.summary.scalar('KL', tf.reduce_sum(KL), collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('ctrl_objective', ctrl_objective, collections=[M_STEP_SUMMARIES])
-        tf.summary.scalar('module_objective', -module_objective, collections=[M_STEP_SUMMARIES])
+        tf.summary.scalar('module_objective', module_objective, collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
     else:
         print('VAR')
         loglikelihood = template(context)[0]
+        selection_logprob = context.selection_logprob()
         KL = context.get_variational_kl(0.3)
 
-        joint_objective = - (tf.reduce_mean(loglikelihood) - KL)
+        joint_objective = - (dataset_size * tf.reduce_mean(loglikelihood + selection_logprob) - KL)
 
         tf.summary.scalar('KL', KL, collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
-        module_objective = tf.reduce_mean(loglikelihood)
-        tf.summary.scalar('module_objective', module_objective, collections=[M_STEP_SUMMARIES])
+        module_objective = dataset_size * tf.reduce_mean(loglikelihood)
+        ctrl_objective = dataset_size * tf.reduce_mean(selection_logprob)
+        tf.summary.scalar('module_objective', -module_objective, collections=[M_STEP_SUMMARIES])
+        tf.summary.scalar('module_objective', -ctrl_objective, collections=[M_STEP_SUMMARIES])
 
-    with tf.control_dependencies([moving_average]):
-        opt = optimizer.minimize(joint_objective)
+    # with tf.control_dependencies([moving_average]):
+    opt = optimizer.minimize(joint_objective)
 
     return opt
 

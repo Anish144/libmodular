@@ -16,6 +16,19 @@ BlockPool = namedtuple('BlockPool', ['units', 'block_r', 'block_c'])
 Parameters = namedtuple('Parameters', ['a', 'b'])
 layers = []
 
+def create_summary(list_of_ops_or_op, name, summary_type):
+    summary = getattr(tf.summary, summary_type)
+
+    if type(list_of_ops_or_op) is list:
+        for i in range(len(list_of_ops_or_op)):
+            summary(str(name) + '_' + str(i), list_of_ops_or_op[i])
+
+    elif type(list_of_ops_or_op) is tf.Tensor:
+        summary(str(name), list_of_ops_or_op)
+
+    else:
+        raise TypeError('Invalid type for summary')
+
 def generator(arrays, batch_size):
 	"""Generate batches, one with respect to each array's first axis."""
 	starts = [0] * len(arrays)
@@ -70,7 +83,7 @@ def generate_sparse_pattern(block: BlockPool):
 
 		pi = tf.pow((1 - tf.pow(u, tf.divide(1,b + 1e-20))), tf.divide(1,a + 1e-20))
 
-		z = get_relaxed_bernoulli(pi, 0.1, u)
+		z = get_relaxed_bernoulli(pi, 0.01, u)
 
 		return tf.reshape(z, [block.block_r, block.block_c])
 
@@ -102,9 +115,13 @@ def run():
 	inputs = tf.placeholder(tf.float32, [None, 28 * 28], 'inputs')
 	labels = tf.placeholder(tf.int32, [None], 'labels')
 
+	sp_hidd_log = []
+	sp_logit_log = []
+
 	def network():
 
-		hidden, sparse_hidden = run_weights(inputs, units=64, block_size=8, activation=tf.nn.relu)
+		hidden, sparse_hidden = run_weights(inputs, units=64, block_size=8, 
+											activation=tf.nn.relu)
 		hidden, sparse_logits = run_weights(hidden, units=32, block_size=8)
 
 		logits = tf.layers.dense(hidden, 10)
@@ -114,27 +131,37 @@ def run():
 		predicted = tf.argmax(logits, axis=-1, output_type=tf.int32)
 		accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, labels), tf.float32))
 
-		return tf.reduce_mean(loglikelihood), accuracy, sparse_hidden, sparse_logits
+		sp_hidd_log.append(
+			tf.reshape(sparse_hidden, 
+				[1, tf.shape(sparse_hidden)[0], 
+				tf.shape(sparse_hidden)[1], 1]
+				))
+		sp_logit_log.append(
+			tf.reshape(sparse_logits, 
+				[1, tf.shape(sparse_logits)[0], 
+				tf.shape(sparse_logits)[1], 1]
+				))
+
+		return (tf.reduce_mean(loglikelihood), accuracy, 
+				sparse_hidden, sparse_logits)
 
 	loglike, acc, sp_hid, sp_log = network()
 
-	KL = get_variational_kl(0.1)
+	KL = get_variational_kl(0.3)
 
 	optimizer = tf.train.AdamOptimizer()
 	opt = optimizer.minimize(-loglike+KL)
 
 	#Generate Summaries
-	sp_hid = tf.reshape(sp_hid, [1, tf.shape(sp_hid)[0], tf.shape(sp_hid)[1], 1])
-	sp_log = tf.reshape(sp_log, [1, tf.shape(sp_log)[0], tf.shape(sp_log)[1], 1])
+	create_summary(sp_hidd_log, 'Sparse Pattern 1', 'image')
+	create_summary(sp_logit_log, 'Sparse Pattern 2', 'image')
+	create_summary(loglike, 'loglikelihood', 'scalar')
+	create_summary(acc, 'accuracy', 'scalar')
 
-	tf.summary.image('Sparse Pattern 1', sp_hid, max_outputs=1)
-	tf.summary.image('Sparse Pattern 2', sp_log, max_outputs=2)
-
-	tf.summary.scalar('loglikelihood', loglike)
-	tf.summary.scalar('accuracy', acc)
 
 	with tf.Session() as sess:
-		init = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
+		init = tf.group(tf.global_variables_initializer(), 
+			tf.local_variables_initializer())
 		sess.run(init)
 
 		time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
