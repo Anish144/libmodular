@@ -179,11 +179,11 @@ def variational_mask(
         a = tf.get_variable(name='a', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform([shape], 
-                                                          minval=0.2, maxval=0.3)) + 1e-20
+                                                          minval=1.8, maxval=2.3)) + 1e-20
         b = tf.get_variable(name='b', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform([shape], 
-                                                          minval=0.3, maxval=0.4)) + 1e-20
+                                                          minval=1.8, maxval=2.3)) + 1e-20
 
         pi = get_pi(a, b, u_shape)
         
@@ -495,9 +495,9 @@ def relaxed_bern(tau, probs):
     with tf.variable_scope('relaxed_bernoulli'):
         u = tf.add(get_u(tf.shape(probs)), 1e-20, name='max_u')
 
-        term_1pi = tf.subtract(1, probs, name='1_minus_pi')
-        term_1pi_add = tf.add(term_1pi, 1e-30, name='1minus_pi_add')
-        term_1pi = tf.pow(term_1pi_add, -1., name='pow_1pi')
+        term_1pi = tf.subtract(1., probs, name='1_minus_pi')
+        term_1pi_add = tf.add(term_1pi, 1e-10, name='1minus_pi_add')
+        term_1pi = tf.realdiv(1., term_1pi_add, name='realdiv_1pi')
         term_1pi_max = tf.add(term_1pi, 1e-20, name='max_pow1pi')
         term_1 = tf.multiply(probs, term_1pi_max, name='term_1_pi')
         term_1_max = tf.add(term_1, 1e-20, name='max_term_1')
