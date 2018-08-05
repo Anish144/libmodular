@@ -129,10 +129,10 @@ def run():
         predicted = tf.argmax(logits, axis=-1, output_type=tf.int32)
         accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, target), tf.float32))
 
-        selection_entropy = context.selection_entropy()
-        batch_selection_entropy = context.batch_selection_entropy()
+        # selection_entropy = context.selection_entropy()
+        # batch_selection_entropy = context.batch_selection_entropy()
 
-        return loglikelihood, logits, accuracy, selection_entropy, batch_selection_entropy, bs_1,  bs_4, l1, l4
+        return loglikelihood, logits, accuracy,  bs_1,  bs_4, l1, l4
 
     #make template: create function and partially evaluate it, create variables the first time then
     #reuse them, better than using autoreuse=True in the scope
@@ -145,7 +145,7 @@ def run():
     else:
         e_step, m_step, eval = modular.modularize(template, optimizer, dataset_size,
                                                   data_indices, sample_size=10, variational=variational)
-    ll, logits, accuracy, s_entropy, bs_entropy, bs_1, bs_4, l1,  l4 = eval
+    ll, logits, accuracy,  bs_1, bs_4, l1,  l4 = eval
 
     # bs_1 = tf.reshape(bs_1, [1,-1,module_count,1])
     # bs_2 = tf.reshape(bs_2, [1,-1,module_count,1])
@@ -169,8 +169,8 @@ def run():
 
     tf.summary.scalar('loglikelihood', tf.reduce_mean(ll))
     tf.summary.scalar('accuracy', accuracy)
-    tf.summary.scalar('entropy/exp_selection', tf.exp(s_entropy))
-    tf.summary.scalar('entropy/exp_batch_selection', tf.exp(bs_entropy))
+    # tf.summary.scalar('entropy/exp_selection', tf.exp(s_entropy))
+    # tf.summary.scalar('entropy/exp_batch_selection', tf.exp(bs_entropy))
 
     try:
         with tf.Session() as sess:

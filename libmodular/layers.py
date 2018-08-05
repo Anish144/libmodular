@@ -179,11 +179,11 @@ def variational_mask(
         a = tf.get_variable(name='a', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform([shape], 
-                                                          minval=3.9, maxval=4.1)) + 1e-20
+                                                          minval=0.2, maxval=0.3)) + 1e-20
         b = tf.get_variable(name='b', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform([shape], 
-                                                          minval=3.9, maxval=4.1)) + 1e-20
+                                                          minval=0.3, maxval=0.4)) + 1e-20
 
         pi = get_pi(a, b, u_shape)
         
@@ -482,29 +482,29 @@ def get_test_pi(a, b):
 
 def get_pi(a, b, u_shape):
     with tf.variable_scope('train_pi'):
-        u = tf.maximum(get_u(u_shape), 10-20, name='max_u')
-        max_b = tf.maximum(b, 1e-20, name='max_b')
-        max_a = tf.maximum(a, 1e-20, name='max_a')
+        u = tf.add(get_u(u_shape), 10-20, name='max_u')
+        max_b = tf.add(b, 1e-20, name='max_b')
+        max_a = tf.add(a, 1e-20, name='max_a')
         term_a = tf.pow(max_a, -1., name='pow_a')
         term_b = tf.pow(max_b, -1., name='pow_b')
         pow_1 = tf.pow(u, term_b, name='pow_1')
         pow_2 = tf.pow(1-pow_1, term_a, name='pow_2')
-        return tf.maximum(pow_2, 1e-20, name='max_pi')
+        return tf.add(pow_2, 1e-20, name='max_pi')
 
 def relaxed_bern(tau, probs):
     with tf.variable_scope('relaxed_bernoulli'):
-        u = tf.maximum(get_u(tf.shape(probs)), 1e-20, name='max_u')
+        u = tf.add(get_u(tf.shape(probs)), 1e-20, name='max_u')
 
         term_1pi = tf.pow(1-probs, -1., name='pow_1pi')
-        term_1pi_max = tf.maximum(term_1pi, 1e-20, name='max_pow1pi')
+        term_1pi_max = tf.add(term_1pi, 1e-20, name='max_pow1pi')
         term_1 = tf.multiply(probs, term_1pi_max, name='term_1_pi')
-        term_1_max = tf.maximum(term_1, 1e-20, name='max_term_1')
+        term_1_max = tf.add(term_1, 1e-20, name='max_term_1')
         term_1_log = tf.log(term_1_max, name='log_term_1')
 
         term_2u = tf.pow(1-u, -1., name='pow_1u')
-        term_2u_max = tf.maximum(term_2u, 1e-20, name='max_pow2u')
+        term_2u_max = tf.add(term_2u, 1e-20, name='max_pow2u')
         term_2 = tf.multiply(u, term_2u_max, name='term_2_u')
-        term_2_max = tf.maximum(term_2, 1e-20, name='max_term_2')
+        term_2_max = tf.add(term_2, 1e-20, name='max_term_2')
         term_2_log = tf.log(term_2_max, name='log_term_2')
 
         tau_divide = tf.divide(1., tau, name='divide_tau')
