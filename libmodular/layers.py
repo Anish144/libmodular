@@ -234,10 +234,7 @@ def variational_mask(
         #                                     eps=0.0001)
 
         tau = 0.001
-        u = tf.maximum(get_u(tf.shape(pi)), 1e-20)
-        term_1 = tf.log(tf.maximum(tf.divide(pi, 1 - pi)), 1e-20)
-        term_2 = tf.log(tf.maximum(tf.divide(u, 1 - u)), 1e-20)
-        z = tf.sigmoid(tf.multiply(tf.divide(1, tau), term_1 + term_2))
+        z = relaxed_bern(tau, pi)
 
         g = tf.get_default_graph()
 
@@ -357,10 +354,7 @@ def new_controller(
         #                             eps=0.0001)
 
         tau = 0.001
-        u = tf.maximum(get_u(tf.shape(pi)), 1e-20)
-        term_1 = tf.log(tf.maximum(tf.divide(pi, 1 - pi)), 1e-20)
-        term_2 = tf.log(tf.maximum(tf.divide(u, 1 - u)), 1e-20)
-        z = tf.sigmoid(tf.multiply(tf.divide(1, tau), term_1 + term_2))
+
 
         best_shape = [context.dataset_size, modules.module_count]
         best_selection_persistent = tf.get_variable('best_selection', 
@@ -488,12 +482,40 @@ def get_test_pi(a, b):
 
 def get_pi(a, b, u_shape):
     with tf.variable_scope('train_pi'):
-        u = tf.maximum(get_u(u_shape), 10-20)
-        term_b = tf.divide(1.,tf.maximum(b, 1e-20))
-        term_a = tf.divide(1.,tf.maximum(a, 1e-20))
-        pow_1 = tf.pow(u + 1e-20, tf.maximum(term_b,  1e-20))
-        pow_2 = tf.pow(tf.maximum(1-pow_1, 1e-20), tf.maximum(term_a,  1e-20))
-        return tf.maximum(pow_2, 1e-20)
+        u = tf.maximum(get_u(u_shape), 10-20, name='max_u')
+        max_b = tf.maximum(b, 1e-20, name='max_b')
+        max_a = tf.maximum(a, 1e-20, name='max_a')
+        term_a = tf.pow(max_a, -1., name='pow_a')
+        term_b = tf.pow(max_b, -1., name='pow_b')
+        pow_1 = tf.pow(u, term_b, name='pow_1')
+        pow_2 = tf.pow(1-pow_1, term_a, name='pow_2')
+        return tf.maximum(pow_2, 1e-20, name='max_pi')
+
+def relaxed_bern(tau, probs):
+    with tf.variable_scope('relaxed_bernoulli'):
+        u = tf.maximum(get_u(tf.shape(probs)), 1e-20, name='max_u')
+
+        term_1pi = tf.pow(1-probs, -1., name='pow_1pi')
+        term_1pi_max = tf.maximum(term_1pi, 1e-20, name='max_pow1pi')
+        term_1 = tf.multiply(probs, term_1pi_max, name='term_1_pi')
+        term_1_max = tf.maximum(term_1, 1e-20, name='max_term_1')
+        term_1_log = tf.log(term_1_max, name='log_term_1')
+
+        term_2u = tf.pow(1-u, -1., name='pow_1u')
+        term_2u_max = tf.maximum(term_2u, 1e-20, name='max_pow2u')
+        term_2 = tf.multiply(u, term_2u_max, name='term_2_u')
+        term_2_max = tf.maximum(term_2, 1e-20, name='max_term_2')
+        term_2_log = tf.log(term_2_max, name='log_term_2')
+
+        tau_divide = tf.divide(1., tau, name='divide_tau')
+
+        term_add = tf.add(term_1_log, term_2_log, name='term_add')
+
+        unsig_z = tf.multiply(term_add, tau_divide, name='unsigmoid_z')
+
+        z = tf.sigmoid(unsig_z, name='sigmoid_z')
+
+        return z
 
 def get_u(shape):
     return tf.random_uniform(shape, maxval=1)
