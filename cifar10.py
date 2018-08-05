@@ -213,7 +213,7 @@ def run():
     config.gpu_options.allow_growth = True
 
     with tf.Session(config=config) as sess:
-        sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+        # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
 
         if REALRUN=='True':
@@ -230,9 +230,9 @@ def run():
             # test_writer = tf.summary.FileWriter(
             #     f'logs/test:Variational_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1__nostopgrads__withetakhigamma{time}', sess.graph)
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_Variationl_with_straightthrough_estimator_and_selectionlogprob_{time}', sess.graph)
+                f'logs/test:Cifar10_Variationl_with_straightthrough_estimator_and_selectionlogprob_alpha=0.01_datasetsizeonlyonloglike_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_Variationl_with_straightthrough_estimator_and_selectionlogprob_{time}', sess.graph)
+                f'logs/train:Cifar10_Variationl_with_straightthrough_estimator_and_selectionlogprob_alpha=0.01_datasetsizeonlyonloglike_{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])

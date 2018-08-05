@@ -274,14 +274,14 @@ def m_step(template, optimizer, dataset_size, data_indices, variational):
         print('VAR')
         loglikelihood = template(context)[0]
         selection_logprob = context.selection_logprob()
-        KL = context.get_variational_kl(0.3)
+        KL = context.get_variational_kl(0.1)
 
-        joint_objective = - (dataset_size * tf.reduce_mean(loglikelihood + selection_logprob) - KL)
+        joint_objective = - (dataset_size * tf.reduce_mean(loglikelihood) + tf.reduce_mean(selection_logprob) - KL)
 
         tf.summary.scalar('KL', KL, collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
         module_objective = dataset_size * tf.reduce_mean(loglikelihood)
-        ctrl_objective = dataset_size * tf.reduce_mean(selection_logprob)
+        ctrl_objective = tf.reduce_mean(selection_logprob)
         tf.summary.scalar('module_objective', -module_objective, collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('module_objective', -ctrl_objective, collections=[M_STEP_SUMMARIES])
 

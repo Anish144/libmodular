@@ -179,11 +179,11 @@ def variational_mask(
         a = tf.get_variable(name='a', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform([shape], 
-                                                          minval=2.9, maxval=20.1))
+                                                          minval=3.9, maxval=4.1)) + 1e-20
         b = tf.get_variable(name='b', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform([shape], 
-                                                          minval=2.9, maxval=20.1))
+                                                          minval=3.9, maxval=4.1)) + 1e-20
 
         pi = get_pi(a, b, u_shape)
         
@@ -234,9 +234,9 @@ def variational_mask(
         #                                     eps=0.0001)
 
         tau = 0.001
-        u = get_u(tf.shape(pi))
-        term_1 = tf.log(tf.divide(pi, 1 - pi + 1e-20) + 1e-20)
-        term_2 = tf.log(tf.divide(u, 1 - u + 1e-20) + 1e-20)
+        u = tf.maximum(get_u(tf.shape(pi)), 1e-20)
+        term_1 = tf.log(tf.maximum(tf.divide(pi, 1 - pi)), 1e-20)
+        term_2 = tf.log(tf.maximum(tf.divide(u, 1 - u)), 1e-20)
         z = tf.sigmoid(tf.multiply(tf.divide(1, tau), term_1 + term_2))
 
         g = tf.get_default_graph()
@@ -357,12 +357,10 @@ def new_controller(
         #                             eps=0.0001)
 
         tau = 0.001
-        u = get_u(tf.shape(pi))
-        term_1 = tf.log(tf.divide(pi, 1 - pi + 1e-20) + 1e-20)
-        term_2 = tf.log(tf.divide(u, 1 - u + 1e-20) + 1e-20)
+        u = tf.maximum(get_u(tf.shape(pi)), 1e-20)
+        term_1 = tf.log(tf.maximum(tf.divide(pi, 1 - pi)), 1e-20)
+        term_2 = tf.log(tf.maximum(tf.divide(u, 1 - u)), 1e-20)
         z = tf.sigmoid(tf.multiply(tf.divide(1, tau), term_1 + term_2))
-
-
 
         best_shape = [context.dataset_size, modules.module_count]
         best_selection_persistent = tf.get_variable('best_selection', 
@@ -490,12 +488,12 @@ def get_test_pi(a, b):
 
 def get_pi(a, b, u_shape):
     with tf.variable_scope('train_pi'):
-        u = get_u(u_shape)
-        term_b = tf.divide(1,b + 1e-20)
-        term_a = tf.divide(1,a + 1e-20)
-        pow_1 = tf.pow(u, term_b)
-        pow_2 = tf.pow(1-pow_1, term_a)
-        return pow_2
+        u = tf.maximum(get_u(u_shape), 10-20)
+        term_b = tf.divide(1.,tf.maximum(b, 1e-20))
+        term_a = tf.divide(1.,tf.maximum(a, 1e-20))
+        pow_1 = tf.pow(u + 1e-20, tf.maximum(term_b,  1e-20))
+        pow_2 = tf.pow(tf.maximum(1-pow_1, 1e-20), tf.maximum(term_a,  1e-20))
+        return tf.maximum(pow_2, 1e-20)
 
 def get_u(shape):
     return tf.random_uniform(shape, maxval=1)
