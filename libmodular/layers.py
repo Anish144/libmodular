@@ -482,7 +482,7 @@ def get_test_pi(a, b):
 
 def get_pi(a, b, u_shape):
     with tf.variable_scope('train_pi'):
-        u = tf.add(get_u(u_shape), 10-20, name='max_u')
+        u = tf.add(get_u(u_shape), 1e-20, name='max_u')
         max_b = tf.add(b, 1e-20, name='max_b')
         max_a = tf.add(a, 1e-20, name='max_a')
         term_a = tf.pow(max_a, -1., name='pow_a')
@@ -495,7 +495,9 @@ def relaxed_bern(tau, probs):
     with tf.variable_scope('relaxed_bernoulli'):
         u = tf.add(get_u(tf.shape(probs)), 1e-20, name='max_u')
 
-        term_1pi = tf.pow(1-probs, -1., name='pow_1pi')
+        term_1pi = tf.subtract(1, probs, name='1_minus_pi')
+        term_1pi_add = tf.add(term_1pi, 1e-30, name='1minus_pi_add')
+        term_1pi = tf.pow(term_1pi_add, -1., name='pow_1pi')
         term_1pi_max = tf.add(term_1pi, 1e-20, name='max_pow1pi')
         term_1 = tf.multiply(probs, term_1pi_max, name='term_1_pi')
         term_1_max = tf.add(term_1, 1e-20, name='max_term_1')
