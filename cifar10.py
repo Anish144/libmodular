@@ -97,7 +97,7 @@ def run():
         #     filter_shape = [3, 3, input_channels, 8]
         #     activation = modular.conv_layer(activation, filter_shape, strides=[1,1,1,1])
 
-        for j in range(1):
+        for j in range(2):
             input_channels = activation.shape[-1]
             filter_shape = [3, 3, input_channels, 8]
             modules = modular.create_conv_modules(filter_shape, 
@@ -143,6 +143,19 @@ def run():
             activation = tf.nn.relu(pooled)
 
         flattened = tf.layers.flatten(activation)
+
+        units = [64, 32]
+        for i in range(2):
+            modules = modular.create_dense_modules(
+                flattened, module_count,
+                units=units[i], activation=tf.nn.relu)
+            flattened, l, s, pi, bs = modular.variational_mask(
+                flattened, modules, context, 0.001, 7.17)
+
+            ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
+            s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
+            pi_log.append(pi)
+            bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
 
         logits = tf.layers.dense(flattened, units=10)
 
@@ -232,9 +245,9 @@ def run():
             # test_writer = tf.summary.FileWriter(
             #     f'logs/test:Variational_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1__nostopgrads__withetakhigamma{time}', sess.graph)
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_Variationl_straightthrough_1layer_a:0.8-2.3_b:2-3_alpha:0.3_pisamplefix_zsamplefix_{time}', sess.graph)
+                f'logs/test:Cifar10_Variationl_straightthrough_4layer_a:2.5-3.5_b:0.1-0.3_alpha:0.3_8modules_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_Variationl_straightthrough_1layer_a:70.8-2.3_b:2-3_alpha:0.3_pisamplefix_zsamplefix_{time}', sess.graph)
+                f'logs/train:Cifar10_Variationl_straightthrough_4layer_a:2.5-3.5_b:0.1-0.3_alpha:0.3_8modules_{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])

@@ -134,7 +134,7 @@ def run_modules(inputs, selection, module_fnc, output_shape):
     return output #[sample * B x 10 (=units)]
 
 
-def run_modules_withloop(inputs, selection, module_fnc, output_shape):
+def run_modules_withloop(inputs, selection, mask, module_fnc, output_shape):
 
     batch_size = tf.shape(inputs)[0]
     if output_shape is not None:
@@ -151,14 +151,14 @@ def run_modules_withloop(inputs, selection, module_fnc, output_shape):
     def compute_module(accum, used_module, i):
         module = tf.slice(used_module, [i], [1])[0]
 
-        mask = tf.equal(module, selection) #select all the elements with the module we are using
+        equal_mask = tf.equal(module, selection) #select all the elements with the module we are using
 
         #OR operation on parallel axis, so that the input is passed through the module if any of the parallel has selected it
-        reduced_mask = tf.reduce_any(mask, axis=-1) 
+        reduced_mask = tf.reduce_any(equal_mask, axis=-1) 
 
         indices = tf.where(reduced_mask) #Coordinates of TRUE
         affected_inp = tf.boolean_mask(inputs, reduced_mask) #Selects the batches that will go through this module
-        output = module_fnc(affected_inp, module)
+        output = module_fnc(affected_inp, module, mask)
 
         #Add the outputs, scatter_nd makes it the right shape with 0s for inputs not computed
         full_output =  accum + tf.scatter_nd(indices, output, tf.cast(output_shape, tf.int64)) 
@@ -200,14 +200,14 @@ def run_masked_modules(inputs, selection, module_fnc, output_shape, ):
 
     return output
 
-def run_masked_modules_withloop(inputs, selection, module_fnc, output_shape):
+def run_masked_modules_withloop(inputs, selection, mask, module_fnc, output_shape):
 
     batch_size = tf.shape(inputs)[0]
     if output_shape is not None:
         output_shape = [batch_size] + output_shape
     else:
         # This is the only way I am aware of to get the output shape easily
-        dummy = module_fnc(inputs, 0)
+        dummy = module_fnc(inputs, 0, mask)
         output_shape = [batch_size] + dummy.shape[1:].as_list()
 
     #Used modules is just a list of modules that we are using
@@ -219,11 +219,11 @@ def run_masked_modules_withloop(inputs, selection, module_fnc, output_shape):
 
         module = tf.slice(used_module, [i], [1])
         inputs_considered = tf.slice(selection, [0, module[0]], [batch_size, 1])
-        mask = tf.reshape(tf.equal(1.,inputs_considered), [-1])
-        indices = tf.where(mask)
-        affected_inp = tf.boolean_mask(inputs, mask)
+        re_mask = tf.reshape(tf.equal(1.,inputs_considered), [-1])
+        indices = tf.where(re_mask)
+        affected_inp = tf.boolean_mask(inputs, re_mask)
 
-        output = module_fnc(affected_inp, module[0])
+        output = module_fnc(affected_inp, module[0], mask)
 
         #Add the outputs, scatter_nd makes it the right shape with 0s for inputs not computed
         full_output =  accum + tf.scatter_nd(indices, output, tf.cast(output_shape, tf.int64)) 
@@ -273,17 +273,14 @@ def m_step(template, optimizer, dataset_size, data_indices, variational):
     else:
         print('VAR')
         loglikelihood = template(context)[0]
-        selection_logprob = context.selection_logprob()
         KL = context.get_variational_kl(0.3)
 
-        joint_objective = - ( tf.reduce_mean(loglikelihood) + tf.reduce_mean(selection_logprob) - KL)
+        joint_objective = - ( dataset_size * tf.reduce_mean(loglikelihood) - KL)
 
         tf.summary.scalar('KL', KL, collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
-        module_objective = tf.reduce_mean(loglikelihood)
-        ctrl_objective = tf.reduce_mean(selection_logprob)
+        module_objective =  dataset_size * tf.reduce_mean(loglikelihood)
         tf.summary.scalar('module_objective', -module_objective, collections=[M_STEP_SUMMARIES])
-        tf.summary.scalar('controller_objective', -ctrl_objective, collections=[M_STEP_SUMMARIES])
 
     # with tf.control_dependencies([moving_average]):
     opt = optimizer.minimize(joint_objective)

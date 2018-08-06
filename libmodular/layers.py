@@ -20,12 +20,14 @@ def create_dense_modules(inputs_or_shape, module_count: int, units: int = None, 
         biases_shape = [module_count, units]
         biases = tf.get_variable('biases', biases_shape, initializer=tf.zeros_initializer())
 
-        def module_fnc(x, a):
+        def module_fnc(x, a, mask):
             """
             Takes in input and a module, multiplies input with the weights of the module
             weights are [module x input_shape x units]
             """
-            out = tf.matmul(x, weights[a]) + biases[a]
+            new_weights = tf.einsum('mio,m->mio', weights, mask)
+            new_biases = tf.einsum('mi,m->mi', biases, mask)
+            out = tf.matmul(x, new_weights[a]) + new_biases[a]
             if activation is not None:
                 out = activation(out)
             return out
@@ -51,9 +53,10 @@ def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
         biases_shape = [module_count, shape[-1]]
         biases = tf.get_variable('biases', biases_shape, initializer=tf.zeros_initializer())
 
-        def module_fnc(x, a):
-
-            return tf.nn.conv2d(x, filter[a], strides, padding) + biases[a]
+        def module_fnc(x, a, mask):
+            new_biases = tf.einsum('mi,m->mi', biases, mask)
+            new_filter = tf.einsum('miocd,m->miocd', filter, mask)
+            return tf.nn.conv2d(x, new_filter[a], strides, padding) + new_biases[a]
 
         return ModulePool(module_count, module_fnc, output_shape=None)
 
@@ -179,11 +182,11 @@ def variational_mask(
         a = tf.get_variable(name='a', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform([shape], 
-                                                          minval=0.8, maxval=2.3)) + 1e-20
+                                                          minval=3.5, maxval=3.5)) + 1e-20
         b = tf.get_variable(name='b', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform([shape], 
-                                                          minval=1.8, maxval=2.3)) + 1e-20
+                                                          minval=0.3, maxval=0.3)) + 1e-20
 
         pi = get_pi(a, b, u_shape)
         
@@ -240,10 +243,11 @@ def variational_mask(
 
         if context.mode == ModularMode.M_STEP:
             test_pi = pi
-            with g.gradient_override_map({"Round": "Identity"}):
-                selection = tf.round(z)
-                final_selection = tf.tile(selection, [tf.shape(flat_inputs)[0]])
-                final_selection = tf.reshape(final_selection,[tf.shape(flat_inputs)[0], shape])
+            # with g.gradient_override_map({"Round": "Identity"}):
+            selection = tf.round(z)
+            # final_selection = selection
+            final_selection = tf.tile(selection, [tf.shape(flat_inputs)[0]])
+            final_selection = tf.reshape(final_selection,[tf.shape(flat_inputs)[0], shape])
 
         elif context.mode == ModularMode.EVALUATION:
             test_pi = get_test_pi(a, b)
@@ -261,7 +265,8 @@ def variational_mask(
                                         eta, khi, gamma)
         context.layers.append(attrs)
 
-        return (run_masked_modules_withloop(inputs, final_selection, 
+        return (run_masked_modules_withloop(inputs, final_selection,
+                                    z,
                                     modules.module_fnc, 
                                     modules.output_shape), 
                 pi, selection, test_pi, test_pi)
@@ -504,15 +509,16 @@ def relaxed_bern(tau, probs, u_shape):
         term_1_pi = tf.log(term_pi_add, name='log_pi')
         term_1 = tf.subtract(term_1_pi, term_1pi, name='term_1')
 
-        term_2u = tf.realdiv(-1., 1-u, name='div_1u')
+        term_2u = tf.subtract(1., u, name='sub_1u')
         term_2u_max = tf.add(term_2u, 1e-20, name='max_pow2u')
-        term_2 = tf.multiply(u, term_2u_max, name='term_2_u')
+        term_1u_log = tf.log(term_2u_max, name='term_1u_log')
+        term_ulog = tf.log(u, name='u_log')
+        term_2 = tf.subtract(term_ulog, term_1u_log, name='term_2_u')
         term_2_max = tf.add(term_2, 1e-20, name='max_term_2')
-        term_2_log = tf.log(term_2_max, name='log_term_2')
 
         tau_divide = tf.divide(1., tau, name='divide_tau')
 
-        term_add = tf.add(term_1, term_2_log, name='term_add')
+        term_add = tf.add(term_1, term_2_max, name='term_add')
 
         unsig_z = tf.multiply(term_add, tau_divide, name='unsigmoid_z')
 
