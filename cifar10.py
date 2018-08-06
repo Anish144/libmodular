@@ -152,11 +152,13 @@ def run():
         predicted = tf.argmax(logits, axis=-1, output_type=tf.int32)
         accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, target), tf.float32))
 
-        selection_entropy = context.selection_entropy()
-        batch_selection_entropy = context.batch_selection_entropy()
+        # selection_entropy = context.selection_entropy()
+        # batch_selection_entropy = context.batch_selection_entropy()
 
-        return (loglikelihood, logits, accuracy, batch_selection_entropy, 
-                selection_entropy, ctrl_logits, s_log, 
+        return (loglikelihood, logits, accuracy, 
+                # batch_selection_entropy, 
+                # selection_entropy, 
+                ctrl_logits, s_log, 
                 context, pi_log, bs_perst_log)
 
     template = tf.make_template('network', network, masked_bernoulli=masked_bernoulli, 
@@ -164,8 +166,8 @@ def run():
 
     (ll, logits, 
     accuracy, 
-    bs_entropy, 
-    s_entropy, 
+    # bs_entropy, 
+    # s_entropy, 
     ctrl_logits, 
     s_log, 
     context, 
@@ -206,8 +208,8 @@ def run():
 
     create_summary(tf.reduce_mean(ll), 'loglikelihood', 'scalar')
     create_summary(accuracy, 'accuracy', 'scalar')
-    create_summary(tf.exp(s_entropy), 'entropy/exp_selection', 'scalar')
-    create_summary(tf.exp(bs_entropy), 'entropy/exp_batch_selection', 'scalar')
+    # create_summary(tf.exp(s_entropy), 'entropy/exp_selection', 'scalar')
+    # create_summary(tf.exp(bs_entropy), 'entropy/exp_batch_selection', 'scalar')
 
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
@@ -230,9 +232,9 @@ def run():
             # test_writer = tf.summary.FileWriter(
             #     f'logs/test:Variational_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1__nostopgrads__withetakhigamma{time}', sess.graph)
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_Variationl_with_straightthrough_estimator_and_selectionlogprob_alpha=0.01_datasetsizeonlyonloglike_{time}', sess.graph)
+                f'logs/test:Cifar10_Variationl_straightthrough_1layer_a:0.8-2.3_b:2-3_alpha:0.3_pisamplefix_zsamplefix_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_Variationl_with_straightthrough_estimator_and_selectionlogprob_alpha=0.01_datasetsizeonlyonloglike_{time}', sess.graph)
+                f'logs/train:Cifar10_Variationl_straightthrough_1layer_a:70.8-2.3_b:2-3_alpha:0.3_pisamplefix_zsamplefix_{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])

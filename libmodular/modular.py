@@ -274,7 +274,7 @@ def m_step(template, optimizer, dataset_size, data_indices, variational):
         print('VAR')
         loglikelihood = template(context)[0]
         selection_logprob = context.selection_logprob()
-        KL = context.get_variational_kl(0.01)
+        KL = context.get_variational_kl(0.3)
 
         joint_objective = - ( tf.reduce_mean(loglikelihood) + tf.reduce_mean(selection_logprob) - KL)
 

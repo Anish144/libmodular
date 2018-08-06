@@ -174,12 +174,12 @@ def variational_mask(
 
         shape = modules.module_count
         input_shape = flat_inputs.shape[-1].value
-        u_shape = [tf.shape(flat_inputs)[0], shape]
+        u_shape = [shape]
 
         a = tf.get_variable(name='a', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform([shape], 
-                                                          minval=1.8, maxval=2.3)) + 1e-20
+                                                          minval=0.8, maxval=2.3)) + 1e-20
         b = tf.get_variable(name='b', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform([shape], 
@@ -234,7 +234,7 @@ def variational_mask(
         #                                     eps=0.0001)
 
         tau = 0.001
-        z = relaxed_bern(tau, pi, [tf.shape(inputs)[0], shape])
+        z = relaxed_bern(tau, pi, [shape])
 
         g = tf.get_default_graph()
 
@@ -242,6 +242,8 @@ def variational_mask(
             test_pi = pi
             with g.gradient_override_map({"Round": "Identity"}):
                 selection = tf.round(z)
+                final_selection = tf.tile(selection, [tf.shape(flat_inputs)[0]])
+                final_selection = tf.reshape(final_selection,[tf.shape(flat_inputs)[0], shape])
 
         elif context.mode == ModularMode.EVALUATION:
             test_pi = get_test_pi(a, b)
@@ -249,17 +251,17 @@ def variational_mask(
                                 x=tf.ones_like(test_pi),
                                 y=tf.zeros_like(test_pi)
                                 )
-            selection = tf.tile(selection, [tf.shape(flat_inputs)[0]])
-            selection = tf.reshape(selection,[tf.shape(flat_inputs)[0], shape])
+            final_selection = tf.tile(selection, [tf.shape(flat_inputs)[0]])
+            final_selection = tf.reshape(final_selection,[tf.shape(flat_inputs)[0], shape])
 
         pseudo_ctrl = tfd.Bernoulli(probs=pi)
-        attrs = ModularLayerAttributes(z, 
+        attrs = ModularLayerAttributes(selection, 
                                         None, pseudo_ctrl, 
                                         a, b, pi, beta, beta_prior,
                                         eta, khi, gamma)
         context.layers.append(attrs)
 
-        return (run_masked_modules_withloop(inputs, selection, 
+        return (run_masked_modules_withloop(inputs, final_selection, 
                                     modules.module_fnc, 
                                     modules.output_shape), 
                 pi, selection, test_pi, test_pi)
@@ -277,7 +279,7 @@ def new_controller(
 
         shape = modules.module_count
         input_shape = flat_inputs.shape[-1].value
-        u_shape = [shape]
+        u_shape = [tf.shape(flat_inputs)[0],shape]
 
         a = tf.get_variable(
             name='a', 
@@ -474,11 +476,11 @@ def beta_bernoulli_controller(
 
 def get_test_pi(a, b):
     with tf.variable_scope('test_pi'):
-        denom = tf.exp(tf.lgamma(1 + tf.realdiv(1.,a) + b))
-        term_1 = tf.exp(tf.lgamma(1 + tf.realdiv(1.,a)))
-        term_2 = tf.multiply(b, tf.exp(tf.lgamma(b)))
-        numerator = tf.multiply(term_1, term_2)
-        return tf.divide(numerator, denom)
+        denom = tf.lgamma(1 + tf.realdiv(1.,a + 1e-20) + b)
+        term_1 = tf.lgamma(1 + tf.realdiv(1.,a + 1e-20))
+        term_2 = tf.add(tf.log(b + 1e-20), tf.lgamma(b))
+        numerator = tf.add(term_1, term_2)
+        return tf.exp(tf.subtract(numerator, denom))
 
 def get_pi(a, b, u_shape):
     with tf.variable_scope('train_pi'):
@@ -495,15 +497,14 @@ def relaxed_bern(tau, probs, u_shape):
     with tf.variable_scope('relaxed_bernoulli'):
         u = tf.add(get_u(u_shape), 1e-20, name='max_u')
 
-        term_1pi = tf.subtract(1., probs, name='1_minus_pi')
+        term_1pi = tf.subtract(1., probs, name='1minus_pi')
         term_1pi_add = tf.add(term_1pi, 1e-10, name='1minus_pi_add')
-        term_1pi = tf.realdiv(1., term_1pi_add, name='realdiv_1pi')
-        term_1pi_max = tf.add(term_1pi, 1e-20, name='max_pow1pi')
-        term_1 = tf.multiply(probs, term_1pi_max, name='term_1_pi')
-        term_1_max = tf.add(term_1, 1e-20, name='max_term_1')
-        term_1_log = tf.log(term_1_max, name='log_term_1')
+        term_1pi = tf.log(term_1pi_add, name='log_1pi')
+        term_pi_add = tf.add(probs, 1e-20, name='pi_add')
+        term_1_pi = tf.log(term_pi_add, name='log_pi')
+        term_1 = tf.subtract(term_1_pi, term_1pi, name='term_1')
 
-        term_2u = tf.pow(1-u, -1., name='pow_1u')
+        term_2u = tf.realdiv(-1., 1-u, name='div_1u')
         term_2u_max = tf.add(term_2u, 1e-20, name='max_pow2u')
         term_2 = tf.multiply(u, term_2u_max, name='term_2_u')
         term_2_max = tf.add(term_2, 1e-20, name='max_term_2')
@@ -511,7 +512,7 @@ def relaxed_bern(tau, probs, u_shape):
 
         tau_divide = tf.divide(1., tau, name='divide_tau')
 
-        term_add = tf.add(term_1_log, term_2_log, name='term_add')
+        term_add = tf.add(term_1, term_2_log, name='term_add')
 
         unsig_z = tf.multiply(term_add, tau_divide, name='unsigmoid_z')
 
