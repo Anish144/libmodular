@@ -234,7 +234,7 @@ def variational_mask(
         #                                     eps=0.0001)
 
         tau = 0.001
-        z = relaxed_bern(tau, pi)
+        z = relaxed_bern(tau, pi, [tf.shape(inputs)[0], shape])
 
         g = tf.get_default_graph()
 
@@ -277,7 +277,7 @@ def new_controller(
 
         shape = modules.module_count
         input_shape = flat_inputs.shape[-1].value
-        u_shape = [tf.shape(flat_inputs)[0], shape]
+        u_shape = [shape]
 
         a = tf.get_variable(
             name='a', 
@@ -474,8 +474,8 @@ def beta_bernoulli_controller(
 
 def get_test_pi(a, b):
     with tf.variable_scope('test_pi'):
-        denom = tf.exp(tf.lgamma(1 + tf.pow(a,-1) + b))
-        term_1 = tf.exp(tf.lgamma(1 + tf.pow(a,-1)))
+        denom = tf.exp(tf.lgamma(1 + tf.realdiv(1.,a) + b))
+        term_1 = tf.exp(tf.lgamma(1 + tf.realdiv(1.,a)))
         term_2 = tf.multiply(b, tf.exp(tf.lgamma(b)))
         numerator = tf.multiply(term_1, term_2)
         return tf.divide(numerator, denom)
@@ -491,9 +491,9 @@ def get_pi(a, b, u_shape):
         pow_2 = tf.pow(1-pow_1, term_a, name='pow_2')
         return tf.add(pow_2, 1e-20, name='max_pi')
 
-def relaxed_bern(tau, probs):
+def relaxed_bern(tau, probs, u_shape):
     with tf.variable_scope('relaxed_bernoulli'):
-        u = tf.add(get_u(tf.shape(probs)), 1e-20, name='max_u')
+        u = tf.add(get_u(u_shape), 1e-20, name='max_u')
 
         term_1pi = tf.subtract(1., probs, name='1_minus_pi')
         term_1pi_add = tf.add(term_1pi, 1e-10, name='1minus_pi_add')
