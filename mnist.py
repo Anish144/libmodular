@@ -13,7 +13,6 @@ import sys
 
 REALRUN = sys.argv[1]
 
-
 def generator(arrays, batch_size):
     """Generate batches, one with respect to each array's first axis."""
     starts = [0] * len(arrays)  # pointers to where we are in iteration
@@ -41,6 +40,19 @@ def get_initialiser(data_size, n, module_count):
         one_hot[np.arange(data_size), choice[:,i]]=1
     return tf.constant_initializer(one_hot, dtype=tf.int32, verify_shape=True)
 
+def create_summary(list_of_ops_or_op, name, summary_type):
+    summary = getattr(tf.summary, summary_type)
+
+    if type(list_of_ops_or_op) is list:
+        for i in range(len(list_of_ops_or_op)):
+            summary(str(name) + '_' + str(i), list_of_ops_or_op[i])
+
+    elif type(list_of_ops_or_op) is tf.Tensor:
+        summary(str(name), list_of_ops_or_op)
+
+    else:
+        raise TypeError('Invalid type for summary')
+
 def run():
     """
     Runs the MNIST example
@@ -50,137 +62,113 @@ def run():
 
     dataset_size = x_train.shape[0] #Size of the entire training set
 
+    batch_size = 250
+    num_batches = dataset_size/batch_size
 
     #Placeholders
     inputs = tf.placeholder(tf.float32, [None, 28 * 28], 'inputs')
     labels = tf.placeholder(tf.int32, [None], 'labels')
     data_indices = tf.placeholder(tf.int32, [None], 'data_indices') #Labels the batch...
 
-    module_count = 8
+    module_count = 32
     variational = 'True'
     masked_bernoulli = False
     new_controller = False
 
-    def network(context: modular.ModularContext, masked_bernoulli=False, variational=variational):
+    def network(context: modular.ModularContext, variational=variational):
         """
         Args:
             Instantiation of the ModularContext class
         """
-        if masked_bernoulli:
+        hidden = inputs
+        units = [16, 8, 4, 2]
+        layers = len(units)
+        s_log = []
+        ctrl_logits =[]
+        pi_log = []
+        bs_perst_log = []
 
-            modules = modular.create_dense_modules(inputs, module_count, units=128, activation=tf.nn.relu) 
-            hidden, l1, bs_1 = modular.masked_layer(inputs, modules, context,  get_initialiser(dataset_size, 2, module_count)) #[sample * B x units]
+        for i in range(layers):
 
-            # modules = modular.create_dense_modules(hidden, module_count, units=64, activation=tf.nn.relu) 
-            # hidden, l2, _ = modular.masked_layer(hidden, modules, context,  get_initialiser(dataset_size, 2, module_count)) #[sample * B x units]
+            if masked_bernoulli:
 
-            # modules = modular.create_dense_modules(hidden, module_count, units=32, activation=tf.nn.relu) 
-            # hidden, l3, _ = modular.masked_layer(hidden, modules, context,  get_initialiser(dataset_size, 2, module_count)) #[sample * B x units]
+                modules = modular.create_dense_modules(hidden, 
+                                                        module_count, 
+                                                        units=units[i],
+                                                        activation=tf.nn.relu) 
+                hidden, l, bs = modular.masked_layer(hidden,
+                                                        modules,
+                                                        context,
+                                                        get_initialiser(dataset_size, 2, module_count))
 
-            modules = modular.create_dense_modules(hidden, module_count, units=10) 
-            logits, l2, bs = modular.masked_layer(hidden, modules, context,  get_initialiser(dataset_size, 2, module_count)) #[sample * B x units]
+            elif variational == 'True':
 
-        elif variational == 'True':
+                modules = modular.create_dense_modules(hidden, 
+                                                        module_count, 
+                                                        units=units[i], 
+                                                        activation=tf.nn.relu) 
+                hidden, l, s, bs, pi = modular.variational_mask(hidden, 
+                                                                modules, 
+                                                                context, 
+                                                                0.001)
+                pi_log.append(pi)
+                s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
 
-            modules = modular.create_dense_modules(inputs, module_count, units=128, activation=tf.nn.relu) 
-            hidden, l1, bs_1,_, _ = modular.variational_mask(inputs, modules, context, 0.001, 3.17) #[sample * B x units]
+            else:
 
-            # modules = modular.create_dense_modules(hidden, module_count, units=64, activation=tf.nn.relu) 
-            # hidden, l2, bs_2 = modular.variational_mask(hidden, modules, context, 0.001, 3.17) #[sample * B x units]
+                modules = modular.create_dense_modules(hidden, 
+                                                        module_count, 
+                                                        units=units[i],
+                                                        activation=tf.nn.relu) 
+                hidden, l, bs = modular.modular_layer(hidden,
+                                                        modules, 
+                                                        parallel_count=1, 
+                                                        context=context)
 
-            # modules = modular.create_dense_modules(hidden, module_count, units=32, activation=tf.nn.relu) 
-            # hidden, l3, bs_3 = modular.variational_mask(hidden, modules, context, 0.001, 3.17) #[sample * B x units]
+            ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
+            bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
 
-            modules = modular.create_dense_modules(hidden, module_count, units=10) 
-            logits, l4, bs_4,_, _ = modular.variational_mask(hidden, modules, context, 0.001, 3.17) #[sample * B x units]
+        logits = tf.layers.dense(hidden, 10)
 
-        elif new_controller:
-
-            modules = modular.create_dense_modules(inputs, module_count, units=128, activation=tf.nn.relu) 
-            hidden, l1, bs_1 = modular.new_controller(inputs, modules, context,  get_initialiser(dataset_size, 5, module_count)) #[sample * B x units]
-
-            modules = modular.create_dense_modules(hidden, module_count, units=64, activation=tf.nn.relu) 
-            hidden, l2, bs_2 = modular.new_controller(hidden, modules, context,  get_initialiser(dataset_size, 5, module_count)) #[sample * B x units]
-
-            modules = modular.create_dense_modules(hidden, module_count, units=32, activation=tf.nn.relu) 
-            hidden, l3, bs_3 = modular.new_controller(hidden, modules, context,  get_initialiser(dataset_size, 5, module_count)) #[sample * B x units]
-
-            modules = modular.create_dense_modules(hidden, module_count, units=10) 
-            logits, l4, bs_4 = modular.new_controller(hidden, modules, context,  get_initialiser(dataset_size, 5, module_count)) #[sample * B x units]
-
-        else:
-
-            modules = modular.create_dense_modules(inputs, module_count, units=128, activation=tf.nn.relu) 
-            hidden, l1, _= modular.modular_layer(inputs, modules, parallel_count=3, context=context) #[sample * B x units]
-
-            modules = modular.create_dense_modules(hidden, module_count, units=64, activation=tf.nn.relu) 
-            hidden, l2, _ = modular.modular_layer(hidden, modules, parallel_count=3, context=context) #[sample * B x units]
-
-            modules = modular.create_dense_modules(hidden, module_count, units=32, activation=tf.nn.relu) 
-            hidden, l3, _ = modular.modular_layer(hidden, modules, parallel_count=3, context=context) #[sample * B x units]
-
-            modules = modular.create_dense_modules(hidden, module_count, units=10) 
-            logits, l4, bs = modular.modular_layer(hidden, modules, parallel_count=3, context=context) #[sample * B x units]
-
-
-        target = modular.modularize_target(labels, context) #Tile targets 
-        loglikelihood = tf.distributions.Categorical(logits).log_prob(target) #Targets are obs, find likelihood
+        target = modular.modularize_target(labels, context)
+        loglikelihood = tf.distributions.Categorical(logits).log_prob(target)
 
         predicted = tf.argmax(logits, axis=-1, output_type=tf.int32)
         accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, target), tf.float32))
 
-        # selection_entropy = context.selection_entropy()
-        # batch_selection_entropy = context.batch_selection_entropy()
+        return (loglikelihood, ctrl_logits, accuracy,
+                bs_perst_log,  s_log, pi_log)
 
-        return loglikelihood, logits, accuracy,  bs_1,  bs_4, l1, l4
-
-    #make template: create function and partially evaluate it, create variables the first time then
-    #reuse them, better than using autoreuse=True in the scope
-    template = tf.make_template('network', network, masked_bernoulli=masked_bernoulli, variational=variational)
+    template = tf.make_template('network', 
+                                network, 
+                                variational=variational)
     optimizer = tf.train.AdamOptimizer()
 
     if variational == 'True':
         m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
-                                                  data_indices, variational)
+                                                  data_indices, variational, num_batches)
     else:
         e_step, m_step, eval = modular.modularize(template, optimizer, dataset_size,
                                                   data_indices, sample_size=10, variational=variational)
-    ll, logits, accuracy,  bs_1, bs_4, l1,  l4 = eval
+    ll, ctrl_logits, accuracy,  bs_perst_log, s_log, pi_log = eval
 
-    # bs_1 = tf.reshape(bs_1, [1,-1,module_count,1])
-    # bs_2 = tf.reshape(bs_2, [1,-1,module_count,1])
-    # bs_3 = tf.reshape(bs_3, [1,-1,module_count,1])
-    # bs_4 = tf.reshape(bs_4, [1,-1,module_count,1])
+    create_summary(pi_log, 'pi', 'histogram')
+    create_summary(ctrl_logits, 'Controller_probs', 'image')
+    create_summary(s_log, 'Selection', 'image')
+    create_summary(bs_perst_log, 'Best_selection', 'image')
 
-    l1_re = tf.reshape(tf.cast(l1, tf.float32), [1,-1,module_count,1])
-    # l2_re = tf.reshape(tf.cast(l2, tf.float32), [1,-1,module_count,1])
-    # l3_re = tf.reshape(tf.cast(l3, tf.float32), [1,-1,module_count,1])
-    l4_re = tf.reshape(tf.cast(l4, tf.float32), [1,-1,module_count,1])
-
-    # tf.summary.image('best_selection_1', tf.cast(bs_1, dtype=tf.float32), max_outputs=1)
-    # tf.summary.image('best_selection_2', tf.cast(bs_2, dtype=tf.float32), max_outputs=1)
-    # tf.summary.image('best_selection_3', tf.cast(bs_3, dtype=tf.float32), max_outputs=1)
-    # tf.summary.image('best_selection_4', tf.cast(bs_4, dtype=tf.float32), max_outputs=1)
-
-    tf.summary.image('l1_controller_probs', l1_re, max_outputs=1)
-    # tf.summary.image('l2_controller_probs', l2_re, max_outputs=1)
-    # tf.summary.image('l3_controller_probs', l3_re, max_outputs=1)
-    tf.summary.image('l4_controller_probs', l4_re, max_outputs=1)
-
-    tf.summary.scalar('loglikelihood', tf.reduce_mean(ll))
-    tf.summary.scalar('accuracy', accuracy)
-    # tf.summary.scalar('entropy/exp_selection', tf.exp(s_entropy))
-    # tf.summary.scalar('entropy/exp_batch_selection', tf.exp(bs_entropy))
+    create_summary(tf.reduce_sum(ll), 'loglikelihood', 'scalar')
+    create_summary(accuracy, 'accuracy', 'scalar')
 
     try:
         with tf.Session() as sess:
             time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
-            sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+            # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
 
             if REALRUN=='True':
-                writer = tf.summary.FileWriter(f'logs/train:_16m_New_added_ctrl_Initial:20-30_alpha:0.1_{time}',
+                writer = tf.summary.FileWriter(f'logs/train:_4layer_16modules_a:2.0_b:0.3_alpha:0.000005_mod_KL{time}',
                                                 sess.graph)
-                test_writer = tf.summary.FileWriter(f'logs/test:_16m_New_added_ctrl_Initial:20-30_alpha:0.1_{time}',
+                test_writer = tf.summary.FileWriter(f'logs/test:_4layer_16modules_a:2.0_b:0.3_alpha:0.000005_mod_KL{time}',
                                                     sess.graph)
             general_summaries = tf.summary.merge_all()
             m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
@@ -195,7 +183,7 @@ def run():
                         }
                 sess.run(e_step, feed_dict)
 
-            batches = generator([x_train, y_train, np.arange(dataset_size)], 300)
+            batches = generator([x_train, y_train, np.arange(dataset_size)], batch_size)
             for i, (batch_x, batch_y, indices) in tqdm(enumerate(batches)):
                 feed_dict = {
                     inputs: batch_x,
@@ -206,14 +194,14 @@ def run():
                     step = m_step
                 else:
                     step = e_step if i % 10 == 0 else m_step
-                _, summary_data, log = sess.run([step, m_step_summaries, logits], feed_dict)
+                _, summary_data = sess.run([step, m_step_summaries], feed_dict)
 
                 if REALRUN=='True':
                     writer.add_summary(summary_data, global_step=i)
 
-                if i % 100 == 0:
+                if i % 400 == 0:
                     test_feed_dict = {inputs: x_test, labels: y_test, data_indices: np.arange(x_test.shape[0])}
-                    summary_data, ctrl = sess.run([m_step_summaries, l1], test_feed_dict)
+                    summary_data = sess.run(m_step_summaries, test_feed_dict)
 
                     if REALRUN=='True':
                         test_writer.add_summary(summary_data, global_step=i)

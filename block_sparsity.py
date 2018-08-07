@@ -150,7 +150,7 @@ def run():
 	KL = get_variational_kl(0.3)
 
 	optimizer = tf.train.AdamOptimizer()
-	opt = optimizer.minimize(-loglike+KL)
+	opt = optimizer.minimize(-dataset_size*loglike+KL)
 
 	#Generate Summaries
 	create_summary(sp_hidd_log, 'Sparse Pattern 1', 'image')

@@ -13,9 +13,8 @@ from libmodular.layers import create_ema_opt
 
 REALRUN = sys.argv[1]
 E_step = sys.argv[2]
-new_controller = sys.argv[3]
+masked_bernoulli = sys.argv[3]
 variational = sys.argv[4]
-beta_bernoulli_controller = sys.argv[5]
 
 def get_initialiser(data_size, n, module_count):
     choice = np.zeros((data_size, n), dtype=int)
@@ -59,6 +58,7 @@ def run():
     dataset_size = x_train.shape[0]
 
     batch_size = 250
+    num_batches = dataset_size/batch_size
 
     # Train dataset
     train = get_dataset(x_train, y_train, batch_size)
@@ -78,7 +78,6 @@ def run():
     inputs_tr = tf.transpose(inputs_cast, perm=(0, 2, 3, 1))
     labels_cast = tf.cast(labels, tf.int32)
 
-    module_count = 8
     masked_bernoulli = False
 
     def network(context: modular.ModularContext, 
@@ -97,14 +96,16 @@ def run():
         #     filter_shape = [3, 3, input_channels, 8]
         #     activation = modular.conv_layer(activation, filter_shape, strides=[1,1,1,1])
 
+        modules_list = [8, 16]
         for j in range(2):
             input_channels = activation.shape[-1]
-            filter_shape = [3, 3, input_channels, 8]
+            module_count = modules_list[j]
+            filter_shape = [3, 3, input_channels, 1]
             modules = modular.create_conv_modules(filter_shape, 
                                                   module_count, 
                                                   strides=[1, 1, 1, 1])
 
-            if masked_bernoulli:
+            if masked_bernoulli == 'True' :
                 print('Masked Bernoulli')
                 hidden, l, s  = modular.masked_layer(
                     activation, modules, context, 
@@ -113,21 +114,9 @@ def run():
             elif variational == 'True':
                 print('Variational')
                 hidden, l, s, pi, bs = modular.variational_mask(
-                    activation, modules, context, 0.001, 7.17)
+                    activation, modules, context, 0.001)
                 # hidden = modular.batch_norm(hidden)
 
-            elif new_controller == 'True':
-                print('New')
-                hidden, l, s, pi, bs = modular.new_controller(
-                    activation, modules, context, 
-                    get_initialiser(dataset_size, 2, module_count), 5.1)
-                # hidden = modular.batch_norm(hidden)
-
-            elif beta_bernoulli_controller == 'True':
-                print('Beta_Bern')
-                hidden, s, l, _ = modular.beta_bernoulli_controller(
-                    activation, modules, context, 
-                    get_initialiser(dataset_size, 5, module_count))
             else:
                 print('Vanilla')
                 hidden, l, s  = modular.modular_layer(
@@ -144,13 +133,14 @@ def run():
 
         flattened = tf.layers.flatten(activation)
 
-        units = [64, 32]
+        modules_list = [8, 4]
         for i in range(2):
+            module_count = modules_list[i]
             modules = modular.create_dense_modules(
                 flattened, module_count,
-                units=units[i], activation=tf.nn.relu)
+                units=8, activation=tf.nn.relu)
             flattened, l, s, pi, bs = modular.variational_mask(
-                flattened, modules, context, 0.001, 7.17)
+                flattened, modules, context, 0.001)
 
             ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
             s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
@@ -197,7 +187,7 @@ def run():
                                                   variational=variational)
     else:
         m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
-                                                  data_indices, variational)
+                                                  data_indices, variational, num_batches)
 
     #Summaries
     params = context.layers
@@ -245,9 +235,9 @@ def run():
             # test_writer = tf.summary.FileWriter(
             #     f'logs/test:Variational_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1__nostopgrads__withetakhigamma{time}', sess.graph)
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_Variationl_straightthrough_4layer_a:2.5-3.5_b:0.1-0.3_alpha:0.3_8modules_{time}', sess.graph)
+                f'logs/test:Cifar10_Variationl_straightthrough_4layer_a:2.0_b:0.1_alpha:0.000005_8modules_modKL_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_Variationl_straightthrough_4layer_a:2.5-3.5_b:0.1-0.3_alpha:0.3_8modules_{time}', sess.graph)
+                f'logs/train:Cifar10_Variationl_straightthrough_4layer_a:2.0_b:0.1_alpha:0.000005_8modules_modKL_{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
@@ -269,7 +259,7 @@ def run():
                 step = e_step if i % 1 == 0 else m_step
 
             # Sometimes generate summaries
-            if i % 100 == 0: 
+            if i % 400 == 0: 
                 summaries = m_step_summaries
                 _, summary_data, test_accuracy, log, select = sess.run(
                     [step, summaries, accuracy, ctrl_logits[0], s_log[0]], 
