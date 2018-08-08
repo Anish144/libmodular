@@ -137,7 +137,7 @@ def run():
         accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, target), tf.float32))
 
         return (loglikelihood, ctrl_logits, accuracy,
-                bs_perst_log,  s_log, pi_log)
+                bs_perst_log,  s_log, pi_log, context)
 
     template = tf.make_template('network', 
                                 network, 
@@ -150,7 +150,14 @@ def run():
     else:
         e_step, m_step, eval = modular.modularize(template, optimizer, dataset_size,
                                                   data_indices, sample_size=10, variational=variational)
-    ll, ctrl_logits, accuracy,  bs_perst_log, s_log, pi_log = eval
+    ll, ctrl_logits, accuracy,  bs_perst_log, s_log, pi_log, context = eval
+
+    params = context.layers
+    a_list = [l.a for l in params]
+    b_list = [l.b for l in params]
+
+    create_summary(a_list, 'a', 'histogram')
+    create_summary(b_list, 'b', 'histogram')
 
     create_summary(pi_log, 'pi', 'histogram')
     create_summary(ctrl_logits, 'Controller_probs', 'image')
@@ -166,9 +173,9 @@ def run():
             # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
 
             if REALRUN=='True':
-                writer = tf.summary.FileWriter(f'logs/train:_4layer_16modules_a:2.0_b:0.3_alpha:0.000005_mod_KL{time}',
+                writer = tf.summary.FileWriter(f'logs/train:_4layer_16modules_a:2.0_b:0.3_alpha:0.05_mod_KL{time}',
                                                 sess.graph)
-                test_writer = tf.summary.FileWriter(f'logs/test:_4layer_16modules_a:2.0_b:0.3_alpha:0.000005_mod_KL{time}',
+                test_writer = tf.summary.FileWriter(f'logs/test:_4layer_16modules_a:2.0_b:0.3_alpha:0.05_mod_KL{time}',
                                                     sess.graph)
             general_summaries = tf.summary.merge_all()
             m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])

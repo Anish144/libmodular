@@ -196,6 +196,9 @@ def variational_mask(
                             initializer=tf.random_uniform(
                                 [shape], minval=0.3, maxval=0.3)) + 1e-20
 
+        # a = tf.check_numerics(a, 'a is NaN')
+        # b = tf.check_numerics(b, 'b is NaN')
+
         pi = get_pi(a, b, u_shape)
         
         tau = 0.001
@@ -242,14 +245,17 @@ def variational_mask(
 
 def get_test_pi(a, b):
     with tf.variable_scope('test_pi'):
-        denom = tf.lgamma(1 + tf.realdiv(1.,a + 1e-20) + b + 1e-20)
-        term_1 = tf.lgamma(1 + tf.realdiv(1.,a + 1e-20))
-        term_2 = tf.add(tf.log(b + 1e-20), tf.lgamma(b + 1e-20))
-        numerator = tf.add(term_1, term_2)
-        full_subtract = tf.subtract(numerator, denom, name='subtract')
-        max_exp = tf.minimum(full_subtract, 100)
-        min_exp = tf.maximum(max_exp, 1e-20)
-        return tf.exp(min_exp, name='final_exp')
+        max_a = tf.check_numerics(tf.maximum(a, 1e-20), 'a is going NaN')
+        div_a = tf.check_numerics(tf.realdiv(1., max_a), 'div_a')
+        denom = tf.check_numerics(tf.lgamma(1 + div_a + b + 1e-20), 'Error here 1')
+        term_1 = tf.check_numerics(tf.lgamma(1 + div_a + 1e-20), 'Error here 2')
+        b_max = tf.check_numerics(tf.maximum(b, 1e-20), 'b is going nan')
+        log_b = tf.check_numerics(tf.log(b_max), 'Error here b_log')
+        term_2 = tf.check_numerics(tf.add(log_b, tf.lgamma(b_max)), 'Error here 3')
+        numerator = tf.check_numerics(tf.add(term_1, term_2), 'Error here 4')
+        full_subtract = tf.check_numerics(tf.subtract(numerator, denom, name='subtract'), 'Error here 5')
+
+        return tf.exp(full_subtract, name='final_exp')
 
 def get_pi(a, b, u_shape):
     with tf.variable_scope('train_pi'):

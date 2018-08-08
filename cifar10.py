@@ -200,9 +200,6 @@ def run():
 
     create_summary(a_list, 'a', 'histogram')
     create_summary(b_list, 'b', 'histogram')
-    create_summary(eta_list, 'eta', 'histogram')
-    create_summary(khi_list, 'khi', 'histogram')
-    create_summary(gamma_list, 'gamma', 'histogram')
 
     create_summary(pi_log, 'pi', 'histogram')
     create_summary(ctrl_logits, 'Controller_probs', 'image')
@@ -235,9 +232,9 @@ def run():
             # test_writer = tf.summary.FileWriter(
             #     f'logs/test:Variational_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1__nostopgrads__withetakhigamma{time}', sess.graph)
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_Variationl_straightthrough_4layer_a:2.0_b:0.1_alpha:0.000005_8modules_modKL_{time}', sess.graph)
+                f'logs/test:Cifar10_Variationl_straightthrough_4layer_a:3.3_b:0.6_alpha:0.05_8modules_modKL_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_Variationl_straightthrough_4layer_a:2.0_b:0.1_alpha:0.000005_8modules_modKL_{time}', sess.graph)
+                f'logs/train:Cifar10_Variationl_straightthrough_4layer_a:3.3_b:0.6_alpha:0.05_8modules_modKL_{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])

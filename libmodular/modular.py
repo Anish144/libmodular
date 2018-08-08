@@ -287,8 +287,8 @@ def run_masked_modules_withloop_and_concat(
         full_output = tf.transpose(full_output, [1,2,3,0,4])
         full_output = tf.reshape(full_output,
                                 [tf.shape(full_output)[0],
-                                tf.shape(dummy)[1],
-                                tf.shape(dummy)[2],
+                                dummy.shape[1].value,
+                                dummy.shape[2].value,
                                 units * module_count])
     else:
         full_output = tf.transpose(full_output, [1,0,2])
@@ -338,7 +338,7 @@ def m_step(
     else:
         print('VAR')
         loglikelihood = template(context)[0]
-        KL = context.get_variational_kl(0.000005)
+        KL = context.get_variational_kl(0.05)
         mod_KL = ((1./num_batches) *  KL)
 
         joint_objective = - (tf.reduce_sum(loglikelihood) - mod_KL)
