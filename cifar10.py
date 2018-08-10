@@ -79,6 +79,15 @@ def run():
     labels_cast = tf.cast(labels, tf.int32)
 
     masked_bernoulli = False
+    beta = 2.
+    sample_size = 5
+    # iteration = tf.placeholder(name='iteration',
+    #                             shape=[],
+    #                             dtype=tf.float32)
+    iteration=0
+
+    inputs_tr = tf.tile(inputs_tr, [sample_size,1,1,1])
+    labels_cast = tf.tile(labels_cast, [sample_size])
 
     def network(context: modular.ModularContext, 
                 masked_bernoulli=False, 
@@ -96,8 +105,8 @@ def run():
         #     filter_shape = [3, 3, input_channels, 8]
         #     activation = modular.conv_layer(activation, filter_shape, strides=[1,1,1,1])
 
-        modules_list = [8, 16]
-        for j in range(2):
+        modules_list = [16, 32, 64]
+        for j in range(len(modules_list)):
             input_channels = activation.shape[-1]
             module_count = modules_list[j]
             filter_shape = [3, 3, input_channels, 1]
@@ -187,7 +196,8 @@ def run():
                                                   variational=variational)
     else:
         m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
-                                                  data_indices, variational, num_batches)
+                                                  data_indices, variational, num_batches, 
+                                                  beta, iteration)
 
     #Summaries
     params = context.layers
@@ -211,10 +221,9 @@ def run():
     # create_summary(tf.exp(s_entropy), 'entropy/exp_selection', 'scalar')
     # create_summary(tf.exp(bs_entropy), 'entropy/exp_batch_selection', 'scalar')
 
-    config = tf.ConfigProto()
-    config.gpu_options.allow_growth = True
 
-    with tf.Session(config=config) as sess:
+
+    with tf.Session() as sess:
         # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
 
@@ -232,9 +241,9 @@ def run():
             # test_writer = tf.summary.FileWriter(
             #     f'logs/test:Variational_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1__nostopgrads__withetakhigamma{time}', sess.graph)
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_Variationl_straightthrough_4layer_a:3.3_b:0.6_alpha:0.05_8modules_modKL_{time}', sess.graph)
+                f'logs/test:Cifar10_Variationl_straightthrough_4layer_a:2.6_b:0.3_alpha:0.05_beta:5_sample_KL_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_Variationl_straightthrough_4layer_a:3.3_b:0.6_alpha:0.05_8modules_modKL_{time}', sess.graph)
+                f'logs/train:Cifar10_Variationl_straightthrough_4layer_a:2.6_b:0.3_alpha:0.05_beta:5_sample_KL_{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
@@ -247,8 +256,13 @@ def run():
             for i in tqdm(range(200)):
                 _ = sess.run(e_step, train_dict)
 
+        j=0
         for i in tqdm(range(400000)):
             # Switch between E-step and M-step
+            # train_dict['iteration'] = j
+            # test_dict['iteration'] = j
+
+
             if variational == 'True':
                 step = m_step
             else:
@@ -292,6 +306,11 @@ def run():
 
             else:
                 sess.run(step, train_dict)
+
+            if i % (dataset_size//batch_size) == 0:
+                j=0
+            else:
+                j+=1
 
         if REALRUN=='True':
             writer.close()

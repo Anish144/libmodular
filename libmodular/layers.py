@@ -190,14 +190,14 @@ def variational_mask(
         a = tf.get_variable(name='a', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform(
-                                [shape], minval=2.0, maxval=2.0)) + 1e-20
+                                [shape], minval=2.6, maxval=2.6)) + 1e-20
         b = tf.get_variable(name='b', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform(
-                                [shape], minval=0.3, maxval=0.3)) + 1e-20
+                                [shape], minval=0.2, maxval=0.2)) + 1e-20
 
-        # a = tf.check_numerics(a, 'a is NaN')
-        # b = tf.check_numerics(b, 'b is NaN')
+        a = tf.check_numerics(a, 'NaN is at a')
+        b = tf.check_numerics(b, 'NaN is at b')
 
         pi = get_pi(a, b, u_shape)
         
@@ -319,9 +319,10 @@ def modularize(template, optimizer, dataset_size, data_indices,
     return e, m
 
 def modularize_variational(template, optimizer, dataset_size, 
-                          data_indices, variational, num_batches):
+                          data_indices, variational, num_batches, beta,
+                          iteration):
     m = m_step(template, optimizer, dataset_size, data_indices, 
-               variational, num_batches)
+               variational, num_batches, beta, iteration)
     eval = evaluation(template, data_indices, dataset_size)
     return m, eval
 

@@ -75,6 +75,14 @@ def run():
     masked_bernoulli = False
     new_controller = False
 
+    iteration = tf.placeholder(name='iteration',
+                        shape=[],
+                        dtype=tf.float32)
+
+    beta = 1.
+    sample_size = 2
+    inputs = tf.tile(inputs, [sample_size,1])
+
     def network(context: modular.ModularContext, variational=variational):
         """
         Args:
@@ -89,7 +97,6 @@ def run():
         bs_perst_log = []
 
         for i in range(layers):
-
             if masked_bernoulli:
 
                 modules = modular.create_dense_modules(hidden, 
@@ -142,11 +149,12 @@ def run():
     template = tf.make_template('network', 
                                 network, 
                                 variational=variational)
-    optimizer = tf.train.AdamOptimizer()
+    optimizer = tf.train.AdamOptimizer(learning_rate=0.0005)
 
     if variational == 'True':
         m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
-                                                  data_indices, variational, num_batches)
+                                                  data_indices, variational, num_batches, beta,
+                                                  iteration)
     else:
         e_step, m_step, eval = modular.modularize(template, optimizer, dataset_size,
                                                   data_indices, sample_size=10, variational=variational)
@@ -173,9 +181,9 @@ def run():
             # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
 
             if REALRUN=='True':
-                writer = tf.summary.FileWriter(f'logs/train:_4layer_16modules_a:2.0_b:0.3_alpha:0.05_mod_KL{time}',
+                writer = tf.summary.FileWriter(f'logs/train:_4layer_16modules_a:.1.6_b:0.1_alpha:0.1_beta:1_lr:0.0005_modKL_doublesmaple_{time}',
                                                 sess.graph)
-                test_writer = tf.summary.FileWriter(f'logs/test:_4layer_16modules_a:2.0_b:0.3_alpha:0.05_mod_KL{time}',
+                test_writer = tf.summary.FileWriter(f'logs/test:_4layer_16modules_a:1.6_b:0.1_alpha:0.1_beta:1_lr:0.0005_modKL_doublesmaple_{time}',
                                                     sess.graph)
             general_summaries = tf.summary.merge_all()
             m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
@@ -190,12 +198,14 @@ def run():
                         }
                 sess.run(e_step, feed_dict)
 
+            j=0
             batches = generator([x_train, y_train, np.arange(dataset_size)], batch_size)
             for i, (batch_x, batch_y, indices) in tqdm(enumerate(batches)):
                 feed_dict = {
                     inputs: batch_x,
                     labels: batch_y,
                     data_indices: indices,
+                    iteration: j
                 }
                 if variational == 'True':
                     step = m_step
@@ -207,11 +217,17 @@ def run():
                     writer.add_summary(summary_data, global_step=i)
 
                 if i % 400 == 0:
-                    test_feed_dict = {inputs: x_test, labels: y_test, data_indices: np.arange(x_test.shape[0])}
+                    test_feed_dict = {inputs: x_test, labels: y_test, data_indices: np.arange(x_test.shape[0]),
+                                        iteration: j}
                     summary_data = sess.run(m_step_summaries, test_feed_dict)
 
                     if REALRUN=='True':
                         test_writer.add_summary(summary_data, global_step=i)
+
+                if i % (dataset_size//batch_size) == 0:
+                    j=0
+                else:
+                    j+=1
 
             writer.close()
             test_writer.close()

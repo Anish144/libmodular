@@ -103,6 +103,33 @@ class ModularContext:
             return tf.reduce_sum(term_1 + term_2 + term_3)
         return tf.reduce_sum([get_layer_KL(i) for i in range(len(self.layers))])
 
+    def get_kumaraswamy_logprob(self):
+        def get_layer_logprob(number):
+            a = self.layers[number].a
+            b = self.layers[number].b
+            pi = tf.check_numerics(self.layers[number].probs, 'pi')
+            term_1 = tf.check_numerics(tf.log(tf.maximum(a,1e-20)) + tf.log(tf.maximum(b,1e-20)),'term_1')
+            term_2 = tf.check_numerics(tf.multiply(a-1, tf.log(tf.maximum(pi, 1e-20))),'term_2')
+            term_pi = tf.check_numerics(tf.pow(tf.maximum(pi, 1e-20), a), 'term_pi')
+            term_log = tf.check_numerics(tf.log(tf.maximum(term_pi, 1e-20)), 'term_log')
+            term_3 = tf.check_numerics(tf.multiply(b-1, term_log),'term_3')
+            return tf.reduce_sum(term_1 + term_2 + term_3)
+            # kum = tfd.Kumaraswamy(a, b)
+            # return kum.log_prob(pi)
+        return tf.reduce_sum([get_layer_logprob(i) for i in range(len(self.layers))])
+
+    def get_pi_logprob(self, alpha):
+        beta_param = 1.
+        def get_layer_logprob(number):
+            pi = tf.check_numerics(self.layers[number].probs, 'logpi:pi')
+            norm = tf.lgamma(alpha) + tf.lgamma(beta_param) - tf.lgamma(alpha+beta_param)
+            term_1 = tf.check_numerics(tf.multiply(tf.maximum(alpha-1,1e-20), tf.log(tf.maximum(pi, 1e-20))), 'term_1 logpi')
+            term_2 = tf.check_numerics(tf.multiply(tf.maximum(beta_param-1,1e-20), tf.log(tf.maximum(1-pi, 1e-20))), 'term_2 logpi')
+            return tf.reduce_sum(term_1 + term_2 - norm)
+            # beta_dist = tf.distributions.Beta(alpha, beta_param)
+            # return beta_dist.log_prob(pi)
+        return tf.reduce_sum([get_layer_logprob(i) for i in range(len(self.layers))])
+
 
 def run_modules(inputs, selection, module_fnc, output_shape):
 
@@ -318,7 +345,7 @@ def e_step(template, sample_size, dataset_size, data_indices):
 
 def m_step(
     template, optimizer, dataset_size, 
-    data_indices, variational, num_batches):
+    data_indices, variational, num_batches, beta, iteration):
     context = ModularContext(ModularMode.M_STEP, data_indices, dataset_size)
 
     if variational == 'False':
@@ -338,8 +365,19 @@ def m_step(
     else:
         print('VAR')
         loglikelihood = template(context)[0]
-        KL = context.get_variational_kl(0.05)
-        mod_KL = ((1./num_batches) *  KL)
+        # log_pi = context.get_pi_logprob(0.005)
+        # log_kum = context.get_kumaraswamy_logprob()
+        # log_pi = tf.check_numerics(log_pi, 'logpi')
+        # log_kum = tf.check_numerics(log_kum, 'log_kum')
+        # score_term = (beta/num_batches) * (log_pi - log_kum)
+
+        # joint_objective = - (tf.reduce_sum(loglikelihood) + score_term)
+
+
+        # damp = get_damper(iteration, get_damp_list(num_batches))
+
+        KL = context.get_variational_kl(0.0005)
+        mod_KL = ((beta/num_batches) *  KL)
 
         joint_objective = - (tf.reduce_sum(loglikelihood) - mod_KL)
 
@@ -353,6 +391,15 @@ def m_step(
 
     return opt
 
+def get_damper(iteration, damp_list):
+    return tf.reduce_sum(tf.slice(damp_list, [tf.cast(iteration,tf.int32)], [1]))
+
+def get_damp_list(num_batches):
+    iteration = tf.range(num_batches)
+    term_1 = (num_batches-iteration)*tf.log(2.)
+    term_2 = tf.log(tf.exp(num_batches*tf.log(2.)) - 1.)
+    damp = tf.exp(term_1 - term_2)
+    return damp
 
 def evaluation(template, data_indices, dataset_size):
     context = ModularContext(ModularMode.EVALUATION, data_indices, dataset_size)
