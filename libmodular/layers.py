@@ -27,9 +27,10 @@ def create_dense_modules(inputs_or_shape, module_count: int, units: int = None, 
             Takes in input and a module, multiplies input with the weights of the module
             weights are [module x input_shape x units]
             """
-            new_weights = tf.einsum('mio,m->mio', weights, mask)
-            new_biases = tf.einsum('mi,m->mi', biases, mask)
-            out = tf.matmul(x, new_weights[a]) + new_biases[a]
+
+            # new_weights = tf.einsum('mio,m->mio', weights, tf.cast(mask, tf.float32))
+            # new_biases = tf.einsum('mi,m->mi', biases, tf.cast(mask, tf.float32))
+            out = tf.matmul(x, weights[a]) + biases[a]
             if activation is not None:
                 out = activation(out)
             return out
@@ -241,6 +242,68 @@ def variational_mask(
                                     modules.output_shape), 
                 pi, selection, test_pi, test_pi)
 
+def reinforce_mask(
+    inputs, modules: ModulePool, 
+    context: ModularContext, eps):
+    with tf.variable_scope(None, 'reinforce'):
+
+        flat_inputs = tf.stop_gradient(tf.layers.flatten(inputs))
+        input_shape = flat_inputs.shape[-1].value
+
+        shape = modules.module_count
+        input_shape = flat_inputs.shape[-1].value
+        u_shape = [shape]
+
+        a = tf.get_variable(name='a', 
+                            dtype=tf.float32, 
+                            initializer=tf.random_uniform(
+                                [shape], minval=2.0, maxval=2.0)) + 1e-20
+        b = tf.get_variable(name='b', 
+                            dtype=tf.float32, 
+                            initializer=tf.random_uniform(
+                                [shape], minval=0.3, maxval=0.3)) + 1e-20
+
+        pi = tf.distributions.Beta(a, b).sample()
+
+        ctrl = tfd.Bernoulli(pi)
+        z = ctrl.sample()
+
+        if context.mode == ModularMode.M_STEP:
+            test_pi = pi
+            selection = tf.round(z)
+            final_selection = tf.tile(
+                selection, [tf.shape(flat_inputs)[0]])
+            final_selection = tf.reshape(
+                final_selection,[tf.shape(flat_inputs)[0], shape])
+
+        if context.mode == ModularMode.EVALUATION:
+            test_pi = mean_of_beta(a, b)
+            selection = mode_of_bernoulli(test_pi)  
+            final_selection = tf.tile(
+                selection, [tf.shape(flat_inputs)[0]])
+            final_selection = tf.reshape(
+                final_selection,[tf.shape(flat_inputs)[0], shape])
+
+        attrs = ModularLayerAttributes(z, 
+                                        None, ctrl, 
+                                        a, b, pi, None, None,
+                                        None, None, None)
+        context.layers.append(attrs)
+
+        return (run_masked_modules_withloop_and_concat(inputs, 
+                                    final_selection,
+                                    z,
+                                    shape,
+                                    modules.units,
+                                    modules.module_fnc, 
+                                    modules.output_shape), 
+                pi, selection, test_pi, test_pi)
+        
+def mean_of_beta(a, b):
+    return tf.distributions.Beta(a, b).mean()
+
+def mode_of_bernoulli(pi):
+    return tfd.Bernoulli(pi).mode()
 
 
 def get_test_pi(a, b):
@@ -317,6 +380,14 @@ def modularize(template, optimizer, dataset_size, data_indices,
     m = m_step(template, optimizer, dataset_size, 
                data_indices, variational, None)
     return e, m
+
+def modularize_reinforce(template, optimizer, dataset_size, 
+                          data_indices, reinforce, num_batches):
+    m = m_step(template, optimizer, dataset_size, 
+               data_indices, reinforce, None)
+    eval = evaluation(template, data_indices, dataset_size)
+    return  m, eval
+
 
 def modularize_variational(template, optimizer, dataset_size, 
                           data_indices, variational, num_batches):

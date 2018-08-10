@@ -14,7 +14,7 @@ from libmodular.layers import create_ema_opt
 REALRUN = sys.argv[1]
 E_step = sys.argv[2]
 masked_bernoulli = sys.argv[3]
-variational = sys.argv[4]
+reinforce = sys.argv[4]
 
 def get_initialiser(data_size, n, module_count):
     choice = np.zeros((data_size, n), dtype=int)
@@ -82,7 +82,7 @@ def run():
 
     def network(context: modular.ModularContext, 
                 masked_bernoulli=False, 
-                variational=False):
+                reinforce=False):
         # 4 modular CNN layers
         activation = inputs_tr
         s_log = []
@@ -111,9 +111,9 @@ def run():
                     activation, modules, context, 
                     get_initialiser(dataset_size, 5, module_count))
 
-            elif variational == 'True':
-                print('Variational')
-                hidden, l, s, pi, bs = modular.variational_mask(
+            elif reinforce == 'True':
+                print('reinforce')
+                hidden, l, s, pi, bs = modular.reinforce_mask(
                     activation, modules, context, 0.001)
                 # hidden = modular.batch_norm(hidden)
 
@@ -139,7 +139,7 @@ def run():
             modules = modular.create_dense_modules(
                 flattened, module_count,
                 units=8, activation=tf.nn.relu)
-            flattened, l, s, pi, bs = modular.variational_mask(
+            flattened, l, s, pi, bs = modular.reinforce_mask(
                 flattened, modules, context, 0.001)
 
             ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
@@ -165,7 +165,7 @@ def run():
                 context, pi_log, bs_perst_log)
 
     template = tf.make_template('network', network, masked_bernoulli=masked_bernoulli, 
-                                variational=variational)
+                                reinforce=reinforce)
 
     (ll, logits, 
     accuracy, 
@@ -181,13 +181,13 @@ def run():
     # with tf.control_dependencies([create_ema_opt()]):
     optimizer = tf.train.AdamOptimizer(learning_rate=0.001)
 
-    if variational == 'False':
+    if reinforce == 'False':
         e_step, m_step, eval = modular.modularize(template, optimizer, dataset_size,
                                                   data_indices, sample_size=10, 
-                                                  variational=variational)
+                                                  reinforce=reinforce)
     else:
-        m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
-                                                  data_indices, variational, num_batches)
+        m_step, eval = modular.modularize_reinforce(template, optimizer, dataset_size,
+                                                  data_indices, reinforce, num_batches)
 
     #Summaries
     params = context.layers
@@ -221,20 +221,20 @@ def run():
         if REALRUN=='True':
         #     writer = tf.summary.FileWriter(f'logs/train:Cifar10_16m_ADDED_Moving_average:0.99999_TNOINPUTADD_NOESTEP_:alpha:0.5_Initial_a=3.8-4.2,b=1.8-2.2_lr:0.001:'+f'_{time}', sess.graph)
         #     test_writer = tf.summary.FileWriter(f'logs/test:Cifar10_16m_ADDED_Moving_average:0.99999_TNOINPUTADD_NOESTEP_:alpha:0.5_Initial_a=3.8-4.2,b=1.8-2.2_lr:0.001:'+f'_{time}', sess.graph)
-            # writer = tf.summary.FileWriter(f'logs/train:Cifar10_Variational_moving_FIX_alpha=1.9_a=3.8-4.2,b=1.8-2.2_{time}')
-            # test_writer = tf.summary.FileWriter(f'logs/test:Cifar10_Variational_moving_FIX_alpha=1.9_a=3.8-4.2,b=1.8-2.2_{time}')
+            # writer = tf.summary.FileWriter(f'logs/train:Cifar10_reinforce_moving_FIX_alpha=1.9_a=3.8-4.2,b=1.8-2.2_{time}')
+            # test_writer = tf.summary.FileWriter(f'logs/test:Cifar10_reinforce_moving_FIX_alpha=1.9_a=3.8-4.2,b=1.8-2.2_{time}')
             # writer = tf.summary.FileWriter(
             #     f'logs/train:Cifar10_ADDED_ctrl_3layer +1denseodular_layer_FULLTEST_{time}', sess.graph)
             # test_writer = tf.summary.FileWriter(
             #     f'logs/test:Cifar10_ADDED_ctrl_3layer+1denseodular_layer_FULLTEST_{time}', sess.graph)
             # writer = tf.summary.FileWriter(
-            #     f'logs/train:Variational_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1_nostopgrads__withetakhigamma{time}', sess.graph)
+            #     f'logs/train:reinforce_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1_nostopgrads__withetakhigamma{time}', sess.graph)
             # test_writer = tf.summary.FileWriter(
-            #     f'logs/test:Variational_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1__nostopgrads__withetakhigamma{time}', sess.graph)
+            #     f'logs/test:reinforce_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1__nostopgrads__withetakhigamma{time}', sess.graph)
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_Variationl_straightthrough_4layer_a:3.3_b:0.6_alpha:0.05_8modules_modKL_{time}', sess.graph)
+                f'logs/test:Cifar10_reinforce_4layer_a:3.3_b:0.6_alpha:0.05_8modules_modKL_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_Variationl_straightthrough_4layer_a:3.3_b:0.6_alpha:0.05_8modules_modKL_{time}', sess.graph)
+                f'logs/train:Cifar10_reinforce_4layer_a:3.3_b:0.6_alpha:0.05_8modules_modKL_{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
@@ -242,18 +242,14 @@ def run():
         train_dict = {handle: make_handle(sess, train)}
         test_dict = {handle: make_handle(sess, test)}
 
-        if E_step == 'True' and variational == 'False':
+        if E_step == 'True' and reinforce == 'False':
             print('EEEEE')
             for i in tqdm(range(200)):
                 _ = sess.run(e_step, train_dict)
 
         for i in tqdm(range(400000)):
             # Switch between E-step and M-step
-            if variational == 'True':
-                step = m_step
-            else:
-                # if i > 1500:
-                step = e_step if i % 1 == 0 else m_step
+            step = e_step if i % 1 == 0 else m_step
 
             # Sometimes generate summaries
             if i % 400 == 0: 
@@ -262,16 +258,6 @@ def run():
                     [step, summaries, accuracy, ctrl_logits[0], s_log[0]], 
                     train_dict)
 
-                # non_zeros = np.zeros((log.shape[0], log.shape[1]))
-                # j=0
-                # for i in log:
-                #     zeros = np.zeros((len(i)))
-                #     zeros[i>0.5] = 1
-                #     non_zeros[j,:] = zeros
-                #     j+=1
-                # plt.bar(np.arange(len(i)), np.sum(non_zeros, axis=0))
-                # plt.savefig('Sparsemaxtest.png')
-                # import pdb; pdb.set_trace()
 
                 if REALRUN=='True':
                     writer.add_summary(summary_data, global_step=i) 

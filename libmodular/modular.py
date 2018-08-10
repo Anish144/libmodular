@@ -85,6 +85,28 @@ class ModularContext:
         """
         return [layer.controller for layer in self.layers]
 
+    def get_beta_logprob(self):
+        def _layer_logprob(number):
+            a = tf.check_numerics(self.layers[number].a, 'a') + 1e-20
+            b = tf.check_numerics(self.layers[number].b, 'b') + 1e-20
+            pi = tf.check_numerics(self.layers[number].probs, 'pi') + 1e-20
+            term_norm = tf.lgamma(a) + tf.lgamma(b) - tf.lgamma(a + b)
+            term_1 = tf.multiply(a-1, tf.log(pi))
+            term_2 = tf.multiply(b-1, tf.log(1-pi+1e-20))
+            return tf.reduce_sum(term_1 + term_2 - term_norm)
+            # return tf.check_numerics(tf.distributions.Beta(a,b).log_prob(pi), 'beta again')
+        return tf.reduce_sum([_layer_logprob(i) for i in range(len(self.layers))])
+
+    def get_prior_beta(self, alpha):
+        beta = 1.
+        def _layer_logprob(number):
+            pi = tf.check_numerics(self.layers[number].probs, 'pi') + 1e-20
+            term_norm = tf.lgamma(alpha) + tf.lgamma(beta) - tf.lgamma(alpha + beta)
+            term_1 = tf.multiply(alpha-1, tf.log(pi))
+            term_2 = tf.multiply(beta-1, tf.log(1-pi+1e-20))
+            return tf.reduce_sum(term_1 + term_2 - term_norm)
+            # return tf.check_numerics(tf.distributions.Beta(a,b).log_prob(pi), 'beta again')
+        return tf.reduce_sum([_layer_logprob(i) for i in range(len(self.layers))])
     def get_naive_kl(self):
         regulariser = tf.distributions.Bernoulli(0.3)
         def get_layer_kl(lay_number):
@@ -262,7 +284,7 @@ def run_masked_modules_withloop_and_concat(
 
     def compute_module(accum, selection, i):
         modules = tf.slice(selection, [0, i], [tf.shape(selection)[0], 1]) 
-        input_mask = tf.reshape(tf.equal(1., modules), [-1])
+        input_mask = tf.reshape(tf.equal(1, modules), [-1])
         indices = tf.where(input_mask)
         affected_inp = tf.boolean_mask(inputs, input_mask)
         output = module_fnc(affected_inp, i, mask)
@@ -299,57 +321,53 @@ def run_masked_modules_withloop_and_concat(
 
     return full_output
 
-def e_step(template, sample_size, dataset_size, data_indices):
-    context = ModularContext(ModularMode.E_STEP, data_indices, dataset_size, sample_size)
+def e_step(template, dataset_size, data_indices, opt):
+    context = ModularContext(ModularMode.E_STEP, data_indices, dataset_size)
 
     # batch_size * sample_size
     loglikelihood = template(context)[0]
-    assert loglikelihood.shape.ndims == 1
 
-    # batch_size * sample_size
-    selection_logprob = context.selection_logprob()
-    assert selection_logprob.shape.ndims == 1
+    module_objective =  tf.reduce_sum(loglikelihood) + context.get_prior_beta(0.05)
 
-    logprob = tf.reshape(loglikelihood + selection_logprob, [sample_size, -1])
-    best_selection_indices = tf.stop_gradient(tf.argmax(logprob, axis=0))
+    kum_log = context.get_beta_logprob()
 
-    return context.update_best_selection(best_selection_indices)
+    path_term = tf.stop_gradient(module_objective - kum_log)
+
+    joint_objective = tf.multiply(kum_log, path_term)
+
+    tf.summary.scalar('E step objective', joint_objective, collections=[M_STEP_SUMMARIES])
+    tf.summary.scalar('E module_objective', module_objective, collections=[M_STEP_SUMMARIES])
+
+    return opt.minimize(-joint_objective)
 
 
 def m_step(
     template, optimizer, dataset_size, 
-    data_indices, variational, num_batches):
+    data_indices, reinforce, num_batches):
     context = ModularContext(ModularMode.M_STEP, data_indices, dataset_size)
 
-    if variational == 'False':
-        print('NOT VAR')
-        loglikelihood = template(context)[0]  
-        selection_logprob = context.selection_logprob()
-        KL = context.get_variational_kl(0.3)
+    print('REINFORCE')
+    loglikelihood = template(context)[0]
+    
+    module_objective =  tf.reduce_sum(loglikelihood) +  context.get_prior_beta(0.05)
 
-        ctrl_objective = -tf.reduce_mean(selection_logprob)
-        module_objective = -tf.reduce_mean(loglikelihood)
-        joint_objective =  -(tf.reduce_mean(selection_logprob + loglikelihood - KL))
+    kum_log = context.get_beta_logprob()
 
-        tf.summary.scalar('KL', tf.reduce_sum(KL), collections=[M_STEP_SUMMARIES])
-        tf.summary.scalar('ctrl_objective', ctrl_objective, collections=[M_STEP_SUMMARIES])
-        tf.summary.scalar('module_objective', module_objective, collections=[M_STEP_SUMMARIES])
-        tf.summary.scalar('ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
-    else:
-        print('VAR')
-        loglikelihood = template(context)[0]
-        KL = context.get_variational_kl(0.05)
-        mod_KL = ((1./num_batches) *  KL)
+    path_term = tf.stop_gradient(module_objective - kum_log)
 
-        joint_objective = - (tf.reduce_sum(loglikelihood) - mod_KL)
+    E_joint_objective = tf.multiply(kum_log, path_term)
 
-        tf.summary.scalar('KL', mod_KL, collections=[M_STEP_SUMMARIES])
-        tf.summary.scalar('ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
-        module_objective =  tf.reduce_sum(loglikelihood)
-        tf.summary.scalar('module_objective', -module_objective, collections=[M_STEP_SUMMARIES])
+    M_joint_objective = module_objective
+
+    total_objective = E_joint_objective + M_joint_objective
+
+    tf.summary.scalar('M step objective', M_joint_objective, collections=[M_STEP_SUMMARIES])
+    tf.summary.scalar('E step objective', E_joint_objective, collections=[M_STEP_SUMMARIES])
+    tf.summary.scalar('module_objective', module_objective, collections=[M_STEP_SUMMARIES])
+    tf.summary.scalar('ELBO', -total_objective, collections=[M_STEP_SUMMARIES])
 
     # with tf.control_dependencies([moving_average]):
-    opt = optimizer.minimize(joint_objective)
+    opt = optimizer.minimize(-total_objective)
 
     return opt
 
@@ -359,7 +377,7 @@ def evaluation(template, data_indices, dataset_size):
     return template(context)
 
 def get_unique_modules(selection):
-    ones = tf.equal(1.,selection)
+    ones = tf.equal(1,selection)
     b,m = tf.shape(ones)[0],  tf.shape(ones)[1]
     modules_idx = tf.range(m)
     tiled = tf.tile(modules_idx, [b])
