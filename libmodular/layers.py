@@ -6,7 +6,8 @@ from libmodular.modular import ModulePool, ModularContext, ModularMode, ModularL
 from libmodular.modular import run_modules, run_masked_modules, e_step, m_step, evaluation, run_masked_modules_withloop, run_modules_withloop, run_masked_modules_withloop_and_concat
 from tensorflow.python import debug as tf_debug
 
-def create_dense_modules(inputs_or_shape, module_count: int, units: int = None, activation=None):
+def create_dense_modules(inputs_or_shape, context,module_count: int, units: int = None, 
+                        activation=None):
     """
     Takes in input, module count, units, and activation and returns a named tuple with a function
     that returns the multiplcation of a sepcific module with the input
@@ -28,9 +29,11 @@ def create_dense_modules(inputs_or_shape, module_count: int, units: int = None, 
             weights are [module x input_shape x units]
             """
 
-            # new_weights = tf.einsum('mio,m->mio', weights, tf.cast(mask, tf.float32))
-            # new_biases = tf.einsum('mi,m->mi', biases, tf.cast(mask, tf.float32))
-            out = tf.matmul(x, weights[a]) + biases[a]
+            new_weights = tf.einsum('mio,sm->msio', weights, tf.cast(mask, tf.float32))
+            new_biases = tf.einsum('mo,sm->mso', biases, tf.cast(mask, tf.float32))
+            x = tf.reshape(x, [-1, context.sample_size, x.shape[-1].value])
+            out = tf.einsum('bsi,sio->bso', x, new_weights[a]) + new_biases[a]
+            out = tf.reshape(out, [-1, units])
             if activation is not None:
                 out = activation(out)
             return out
@@ -222,9 +225,9 @@ def variational_mask(
                                 y=tf.zeros_like(test_pi)
                                 )
             final_selection = tf.tile(
-                selection, [tf.shape(flat_inputs)[0]])
+                selection, [tf.shape(inputs)[0]])
             final_selection = tf.reshape(
-                final_selection,[tf.shape(flat_inputs)[0], shape])
+                final_selection,[tf.shape(inputs)[0], shape])
 
         pseudo_ctrl = tfd.Bernoulli(probs=pi)
         attrs = ModularLayerAttributes(selection, 
@@ -244,9 +247,10 @@ def variational_mask(
 
 def reinforce_mask(
     inputs, modules: ModulePool, 
-    context: ModularContext, eps):
+    context: ModularContext, eps, tile_shape):
     with tf.variable_scope(None, 'reinforce'):
 
+        inputs = context.begin_modular(inputs)
         flat_inputs = tf.stop_gradient(tf.layers.flatten(inputs))
         input_shape = flat_inputs.shape[-1].value
 
@@ -263,7 +267,7 @@ def reinforce_mask(
                             initializer=tf.random_uniform(
                                 [shape], minval=0.3, maxval=0.3)) + 1e-20
 
-        pi = tf.distributions.Beta(a, b).sample()
+        pi = tf.distributions.Beta(a, b).sample(sample_shape=(context.sample_size))
 
         ctrl = tfd.Bernoulli(pi)
         z = ctrl.sample()
@@ -272,19 +276,17 @@ def reinforce_mask(
             test_pi = pi
             selection = tf.round(z)
             final_selection = tf.tile(
-                selection, [tf.shape(flat_inputs)[0]])
-            final_selection = tf.reshape(
-                final_selection,[tf.shape(flat_inputs)[0], shape])
+                selection, [tile_shape, 1])
 
         if context.mode == ModularMode.EVALUATION:
             test_pi = mean_of_beta(a, b)
             selection = mode_of_bernoulli(test_pi)  
             final_selection = tf.tile(
-                selection, [tf.shape(flat_inputs)[0]])
+                selection, [tf.shape(inputs)[0]])
             final_selection = tf.reshape(
-                final_selection,[tf.shape(flat_inputs)[0], shape])
+                final_selection,[tf.shape(inputs)[0], shape])
 
-        attrs = ModularLayerAttributes(z, 
+        attrs = ModularLayerAttributes(z,
                                         None, ctrl, 
                                         a, b, pi, None, None,
                                         None, None, None)
@@ -368,7 +370,7 @@ def get_u(shape):
     return tf.random_uniform(shape, maxval=1)
 
 def modularize_target(target, context: ModularContext):
-    if context.mode == ModularMode.E_STEP:
+    if context.mode == ModularMode.M_STEP:
         rank = target.shape.ndims
         return tf.tile(target, [context.sample_size] + [1] * (rank-1))
     return target
@@ -382,9 +384,10 @@ def modularize(template, optimizer, dataset_size, data_indices,
     return e, m
 
 def modularize_reinforce(template, optimizer, dataset_size, 
-                          data_indices, reinforce, num_batches):
+                          data_indices, reinforce, num_batches,
+                          sample_size):
     m = m_step(template, optimizer, dataset_size, 
-               data_indices, reinforce, None)
+               data_indices, reinforce, None, sample_size)
     eval = evaluation(template, data_indices, dataset_size)
     return  m, eval
 

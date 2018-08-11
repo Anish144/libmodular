@@ -35,7 +35,7 @@ class ModularContext:
         self.variational = variational
 
     def begin_modular(self, inputs):
-        if self.mode == ModularMode.E_STEP and not self.e_step_samples:
+        if self.mode == ModularMode.M_STEP and not self.e_step_samples:
             self.e_step_samples = True
             rank = inputs.shape.ndims
             return tf.tile(inputs, [self.sample_size] +[1] * (rank - 1))
@@ -97,6 +97,20 @@ class ModularContext:
             # return tf.check_numerics(tf.distributions.Beta(a,b).log_prob(pi), 'beta again')
         return tf.reduce_sum([_layer_logprob(i) for i in range(len(self.layers))])
 
+
+    def control_variate(self, w):
+        def _layer_logprob(number):
+            a = tf.check_numerics(self.layers[number].a, 'a') + 1e-20
+            b = tf.check_numerics(self.layers[number].b, 'b') + 1e-20
+            pi = tf.check_numerics(self.layers[number].probs, 'pi') + 1e-20
+            term_norm = tf.lgamma(a) + tf.lgamma(b) - tf.lgamma(a + b)
+            term_1 = tf.multiply(a-1, tf.log(pi))
+            term_2 = tf.multiply(b-1, tf.log(1-pi+1e-20))
+            return w * tf.reduce_mean(term_1 + term_2 - term_norm)
+            # return tf.check_numerics(tf.distributions.Beta(a,b).log_prob(pi), 'beta again')
+        return tf.reduce_sum([_layer_logprob(i) for i in range(len(self.layers))])
+
+
     def get_prior_beta(self, alpha):
         beta = 1.
         def _layer_logprob(number):
@@ -107,6 +121,7 @@ class ModularContext:
             return tf.reduce_sum(term_1 + term_2 - term_norm)
             # return tf.check_numerics(tf.distributions.Beta(a,b).log_prob(pi), 'beta again')
         return tf.reduce_sum([_layer_logprob(i) for i in range(len(self.layers))])
+
     def get_naive_kl(self):
         regulariser = tf.distributions.Bernoulli(0.3)
         def get_layer_kl(lay_number):
@@ -271,7 +286,7 @@ def run_masked_modules_withloop_and_concat(
     else:
         # This is the only way I am aware of to get the output shape easily
         dummy = module_fnc(inputs, 0, mask)
-        output_shape = [batch_size] + dummy.shape[1:].as_list()
+        output_shape = dummy.shape[0:].as_list()
 
     #Used modules is just a list of modules that we are using
     used_modules = get_unique_modules(selection)
@@ -286,6 +301,7 @@ def run_masked_modules_withloop_and_concat(
         modules = tf.slice(selection, [0, i], [tf.shape(selection)[0], 1]) 
         input_mask = tf.reshape(tf.equal(1, modules), [-1])
         indices = tf.where(input_mask)
+
         affected_inp = tf.boolean_mask(inputs, input_mask)
         output = module_fnc(affected_inp, i, mask)
 
@@ -343,8 +359,8 @@ def e_step(template, dataset_size, data_indices, opt):
 
 def m_step(
     template, optimizer, dataset_size, 
-    data_indices, reinforce, num_batches):
-    context = ModularContext(ModularMode.M_STEP, data_indices, dataset_size)
+    data_indices, reinforce, num_batches, sample_size):
+    context = ModularContext(ModularMode.M_STEP, data_indices, dataset_size, sample_size)
 
     print('REINFORCE')
     loglikelihood = template(context)[0]
@@ -355,7 +371,7 @@ def m_step(
 
     path_term = tf.stop_gradient(module_objective - kum_log)
 
-    E_joint_objective = tf.multiply(kum_log, path_term)
+    E_joint_objective = tf.multiply(kum_log, path_term) - context.control_variate(2.3)
 
     M_joint_objective = module_objective
 

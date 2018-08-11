@@ -77,7 +77,7 @@ def run():
     labels = tf.placeholder(tf.int32, [None], 'labels')
     data_indices = tf.placeholder(tf.int32, [None], 'data_indices') #Labels the batch...
 
-    sample_size = 10
+    sample_size = 2
     module_count = 32
     reinforce = 'True'
     masked_bernoulli = False
@@ -115,13 +115,15 @@ def run():
             elif reinforce == 'True':
 
                 modules = modular.create_dense_modules(hidden, 
+                                                        context,
                                                         module_count, 
                                                         units=units[i], 
-                                                        activation=tf.nn.relu) 
+                                                        activation=tf.nn.relu)
                 hidden, l, s, bs, pi = modular.reinforce_mask(hidden, 
                                                                 modules, 
                                                                 context, 
-                                                                0.001)
+                                                                0.001,
+                                                                tf.shape(inputs)[0])
                 pi_log.append(pi)
                 s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
 
@@ -141,12 +143,13 @@ def run():
 
         logits = tf.layers.dense(hidden, 10)
 
-        loglikelihood = tf.distributions.Categorical(logits).log_prob(labels)
+        target = modular.modularize_target(labels, context)
+        loglikelihood = tf.distributions.Categorical(logits).log_prob(target)
 
         loglikelihood = sum_and_mean_il(loglikelihood, sample_size)
 
         predicted = tf.argmax(logits, axis=-1, output_type=tf.int32)
-        accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, labels), tf.float32))
+        accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, target), tf.float32))
 
         return (loglikelihood, ctrl_logits, accuracy,
                 bs_perst_log,  s_log, pi_log, context)
@@ -158,7 +161,8 @@ def run():
 
     if reinforce == 'True':
         m_step, eval = modular.modularize_reinforce(template, optimizer, dataset_size,
-                                                  data_indices, reinforce, num_batches)
+                                                  data_indices, reinforce, num_batches,
+                                                  sample_size)
     else:
         e_step, m_step, eval = modular.modularize(template, optimizer, dataset_size,
                                                   data_indices, sample_size=10, reinforce=reinforce)
@@ -185,9 +189,9 @@ def run():
             # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
 
             if REALRUN=='True':
-                writer = tf.summary.FileWriter(f'logs/train:_4layer_16modules_a:2.0_b:0.3_alpha:0.05_REINFORCE_TRY_wihtout_weight_mulitplication_{time}',
+                writer = tf.summary.FileWriter(f'logs/train:_4layer_16modules_a:2.0_b:0.3_alpha:0.05_REINFORCE_TRY_10samples_{time}',
                                                 sess.graph)
-                test_writer = tf.summary.FileWriter(f'logs/test:_4layer_16modules_a:2.0_b:0.3_alpha:0.05_REINFORCE_TRY_wihtout_weight_mulitplication_{time}',
+                test_writer = tf.summary.FileWriter(f'logs/test:_4layer_16modules_a:2.0_b:0.3_alpha:0.05_REINFORCE_TRY_10samples_{time}',
                                                     sess.graph)
             general_summaries = tf.summary.merge_all()
             m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
