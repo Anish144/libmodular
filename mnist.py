@@ -157,7 +157,7 @@ def run():
     template = tf.make_template('network', 
                                 network, 
                                 reinforce=reinforce)
-    optimizer = tf.train.AdamOptimizer()
+    optimizer = tf.train.AdamOptimizer(learning_rate=0.0001)
 
     if reinforce == 'True':
         m_step, eval = modular.modularize_reinforce(template, optimizer, dataset_size,
@@ -189,9 +189,9 @@ def run():
             # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
 
             if REALRUN=='True':
-                writer = tf.summary.FileWriter(f'logs/train:_4layer_16modules_a:2.0_b:0.3_alpha:0.05_REINFORCE_TRY_10samples_{time}',
+                writer = tf.summary.FileWriter(f'logs/train:_4layer_16modules_a:2.0_b:0.3_alpha:0.05_REINFORCE_TRY_10samples__NEWA_LR:0.0001_NOVARIATES_{time}',
                                                 sess.graph)
-                test_writer = tf.summary.FileWriter(f'logs/test:_4layer_16modules_a:2.0_b:0.3_alpha:0.05_REINFORCE_TRY_10samples_{time}',
+                test_writer = tf.summary.FileWriter(f'logs/test:_4layer_16modules_a:2.0_b:0.3_alpha:0.05_REINFORCE_TRY_10samples__NEWA_LR:0.0001_NOVARIATES_{time}',
                                                     sess.graph)
             general_summaries = tf.summary.merge_all()
             m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])

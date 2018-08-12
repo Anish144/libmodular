@@ -90,10 +90,13 @@ class ModularContext:
             a = tf.check_numerics(self.layers[number].a, 'a') + 1e-20
             b = tf.check_numerics(self.layers[number].b, 'b') + 1e-20
             pi = tf.check_numerics(self.layers[number].probs, 'pi') + 1e-20
-            term_norm = tf.lgamma(a) + tf.lgamma(b) - tf.lgamma(a + b)
-            term_1 = tf.multiply(a-1, tf.log(pi))
-            term_2 = tf.multiply(b-1, tf.log(1-pi+1e-20))
-            return tf.reduce_sum(term_1 + term_2 - term_norm)
+            z = tf.cast(self.layers[number].selection, tf.float32)
+            n_a = z + a
+            n_b = b - a + tf.constant(1.)
+            term_norm = tf.lgamma(n_a) + tf.lgamma(n_b) - tf.lgamma(n_a + n_b)
+            term_1 = tf.multiply(n_a-1, tf.log(pi))
+            term_2 = tf.multiply(n_b-1, tf.log(1-pi+1e-20))
+            return tf.reduce_sum(tf.reduce_mean(term_1 + term_2 - term_norm, axis=0))
             # return tf.check_numerics(tf.distributions.Beta(a,b).log_prob(pi), 'beta again')
         return tf.reduce_sum([_layer_logprob(i) for i in range(len(self.layers))])
 
@@ -112,13 +115,16 @@ class ModularContext:
 
 
     def get_prior_beta(self, alpha):
-        beta = 1.
+        beta = tf.constant(1.)
         def _layer_logprob(number):
             pi = tf.check_numerics(self.layers[number].probs, 'pi') + 1e-20
-            term_norm = tf.lgamma(alpha) + tf.lgamma(beta) - tf.lgamma(alpha + beta)
-            term_1 = tf.multiply(alpha-1, tf.log(pi))
-            term_2 = tf.multiply(beta-1, tf.log(1-pi+1e-20))
-            return tf.reduce_sum(term_1 + term_2 - term_norm)
+            z = tf.cast(self.layers[number].selection, tf.float32)
+            n_alpha = z + tf.constant(alpha)
+            n_beta = beta - z + tf.constant(1.)
+            term_norm = tf.lgamma(n_alpha) + tf.lgamma(n_beta) - tf.lgamma(n_alpha + n_beta)
+            term_1 = tf.multiply(n_alpha-1, tf.log(pi+1e-20))
+            term_2 = tf.multiply(n_beta-1, tf.log(1-pi+1e-20))
+            return tf.reduce_sum(tf.reduce_mean(term_1 + term_2 - term_norm, axis=0))
             # return tf.check_numerics(tf.distributions.Beta(a,b).log_prob(pi), 'beta again')
         return tf.reduce_sum([_layer_logprob(i) for i in range(len(self.layers))])
 
@@ -367,11 +373,11 @@ def m_step(
     
     module_objective =  tf.reduce_sum(loglikelihood) +  context.get_prior_beta(0.05)
 
-    kum_log = context.get_beta_logprob()
+    q_log = context.get_beta_logprob()
 
-    path_term = tf.stop_gradient(module_objective - kum_log)
+    path_term = tf.stop_gradient(module_objective - q_log)
 
-    E_joint_objective = tf.multiply(kum_log, path_term) - context.control_variate(2.3)
+    E_joint_objective = tf.multiply(q_log, path_term)
 
     M_joint_objective = module_objective
 
