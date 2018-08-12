@@ -3,7 +3,7 @@ from tensorflow.contrib import distributions as tfd
 import numpy as np
 
 from libmodular.modular import ModulePool, ModularContext, ModularMode, ModularLayerAttributes, VariationalLayerAttributes
-from libmodular.modular import run_modules, run_masked_modules, e_step, m_step, evaluation, run_masked_modules_withloop, run_modules_withloop, run_masked_modules_withloop_and_concat
+from libmodular.modular import run_modules, run_masked_modules, e_step, m_step, evaluation, run_masked_modules_withloop, run_modules_withloop, run_masked_modules_withloop_and_concat, run_non_modular
 from tensorflow.python import debug as tf_debug
 
 def create_dense_modules(inputs_or_shape, module_count: int, units: int = None, activation=None):
@@ -27,9 +27,9 @@ def create_dense_modules(inputs_or_shape, module_count: int, units: int = None, 
             Takes in input and a module, multiplies input with the weights of the module
             weights are [module x input_shape x units]
             """
-            new_weights = tf.einsum('mio,m->mio', weights, mask)
-            new_biases = tf.einsum('mi,m->mi', biases, mask)
-            out = tf.matmul(x, new_weights[a]) + new_biases[a]
+            new_weights = tf.einsum('mio,bm->mbio', weights, tf.cast(mask, tf.float32))
+            new_biases = tf.einsum('mo,bm->mbo', biases, tf.cast(mask, tf.float32))
+            out = tf.einsum('bi,bio->bo', x, new_weights[a]) + new_biases[a]
             if activation is not None:
                 out = activation(out)
             return out
@@ -61,9 +61,47 @@ def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
             'biases', biases_shape, initializer=tf.zeros_initializer())
 
         def module_fnc(x, a, mask):
-            new_biases = tf.einsum('mi,m->mi', biases, mask)
-            new_filter = tf.einsum('miocd,m->miocd', filter, mask)
-            return tf.nn.conv2d(x, new_filter[a], strides, padding) + new_biases[a]
+            fw,fh,d = shape[0], shape[1], shape[-1]
+            h,w,c = x.shape[1].value, x.shape[2].value, x.shape[-1].value
+            new_biases = tf.einsum('mo,bm->mbo', biases, mask)
+            new_filter = tf.einsum('miocd,bm->mbiocd', filter, mask)
+            new_biases = new_biases[a]
+            new_filter = new_filter[a]
+            #[fh,fw,b,c,d]
+            filter_transpose = tf.transpose(new_filter, [1,2,0,3,4])
+            #[fh,fw,b*c,d]
+            filter_reshape = tf.reshape(filter_transpose, 
+                                        [fw, fh, -1, d])
+            #[h,w,b,c]
+            inputs_transpose = tf.transpose(x, [1,2,0,3])
+            #[1,h,w,b*c]
+            inputs_reshape = tf.reshape(inputs_transpose, 
+                                        [1, h, w, -1])
+
+            out = tf.nn.depthwise_conv2d(
+                      inputs_reshape,
+                      filter=filter_reshape,
+                      strides=[1, 1, 1, 1],
+                      padding=padding)
+            if padding == "SAME":
+                out = tf.reshape(out, [h, w, -1, c, d])
+            if padding == "VALID":
+                out = tf.reshape(out, [h-fh+1, w-fw+1, -1, c, d])
+            out = tf.transpose(out, [2, 0, 1, 3, 4])
+            out = tf.reduce_sum(out, axis=3) 
+            out = tf.transpose(out, [1,2,0,3]) + new_biases
+            out = tf.transpose(out, [2,0,1,3])
+
+            return out
+
+        def module_fnc_non_modular(x, a, mask):
+            new_biases = tf.einsum('m,m->m', biases, mask)
+            new_filter = tf.einsum('iocm,m->mioc', filter, mask)
+            new_filter = new_filter[a]
+            h,w,c = shape[0:3]
+            new_filter = tf.reshape(new_filter, [1,h,w,c])
+            new_filter = tf.transpose(new_filter, [1,2,3,0])
+            return tf.nn.conv2d(x, new_filter, strides, padding) + new_biases[a]
 
         return ModulePool(module_count, module_fnc, output_shape=None, units=list(shape)[-1])
 
@@ -167,7 +205,7 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext, initializ
 
 def variational_mask(
     inputs, modules: ModulePool, 
-    context: ModularContext, eps):
+    context: ModularContext, eps, tile_shape):
     """
     Constructs a Bernoulli masked layer that outputs sparse 
     binary masks dependent on the input
@@ -180,12 +218,13 @@ def variational_mask(
     """
     with tf.variable_scope(None, 'variational_mask'):
 
+        inputs = context.begin_modular(inputs)
         flat_inputs = tf.stop_gradient(tf.layers.flatten(inputs))
         input_shape = flat_inputs.shape[-1].value
 
         shape = modules.module_count
         input_shape = flat_inputs.shape[-1].value
-        u_shape = [shape]
+        u_shape = [context.sample_size, shape]
 
         a = tf.get_variable(name='a', 
                             dtype=tf.float32, 
@@ -194,25 +233,25 @@ def variational_mask(
         b = tf.get_variable(name='b', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform(
-                                [shape], minval=0.2, maxval=0.2)) + 1e-20
+                                [shape], minval=2.6, maxval=2.6)) + 1e-20
 
-        a = tf.check_numerics(a, 'NaN is at a')
-        b = tf.check_numerics(b, 'NaN is at b')
+        # a = tf.check_numerics(a, 'NaN is at a')
+        # b = tf.check_numerics(b, 'NaN is at b')
 
         pi = get_pi(a, b, u_shape)
-        
-        tau = 0.001
-        z = relaxed_bern(tau, pi, [shape])
 
-        g = tf.get_default_graph()
+        tau = 0.001
+        z = relaxed_bern(tau, pi, [tile_shape] + pi.shape.as_list())
+
+
+        z = tf.reshape(z, [-1, shape])
+
+
 
         if context.mode == ModularMode.M_STEP:
             test_pi = pi
             selection = tf.round(z)
-            final_selection = tf.tile(
-                selection, [tf.shape(flat_inputs)[0]])
-            final_selection = tf.reshape(
-                final_selection,[tf.shape(flat_inputs)[0], shape])
+            final_selection = selection
 
         elif context.mode == ModularMode.EVALUATION:
             test_pi = get_test_pi(a, b)
@@ -240,6 +279,15 @@ def variational_mask(
                                     modules.module_fnc, 
                                     modules.output_shape), 
                 pi, selection, test_pi, test_pi)
+
+        # return (run_non_modular(inputs,
+        #                     final_selection,
+        #                     z,
+        #                     shape,
+        #                     modules.units,
+        #                     modules.module_fnc, 
+        #                     modules.output_shape), 
+        #                 pi, selection, test_pi, test_pi)
 
 
 
@@ -305,7 +353,7 @@ def get_u(shape):
     return tf.random_uniform(shape, maxval=1)
 
 def modularize_target(target, context: ModularContext):
-    if context.mode == ModularMode.E_STEP:
+    if context.mode == ModularMode.M_STEP:
         rank = target.shape.ndims
         return tf.tile(target, [context.sample_size] + [1] * (rank-1))
     return target
@@ -314,15 +362,15 @@ def modularize_target(target, context: ModularContext):
 def modularize(template, optimizer, dataset_size, data_indices, 
                sample_size, variational, num_batches=None):
     e = e_step(template, sample_size, dataset_size, data_indices)
-    m = m_step(template, optimizer, dataset_size, 
+    m = m_step(template, optimizer, dataset_size,
                data_indices, variational, None)
     return e, m
 
 def modularize_variational(template, optimizer, dataset_size, 
                           data_indices, variational, num_batches, beta,
-                          iteration):
+                         sample_size):
     m = m_step(template, optimizer, dataset_size, data_indices, 
-               variational, num_batches, beta, iteration)
+               variational, num_batches, beta, sample_size)
     eval = evaluation(template, data_indices, dataset_size)
     return m, eval
 

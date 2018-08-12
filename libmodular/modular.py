@@ -35,7 +35,7 @@ class ModularContext:
         self.variational = variational
 
     def begin_modular(self, inputs):
-        if self.mode == ModularMode.E_STEP and not self.e_step_samples:
+        if self.mode == ModularMode.M_STEP and not self.e_step_samples:
             self.e_step_samples = True
             rank = inputs.shape.ndims
             return tf.tile(inputs, [self.sample_size] +[1] * (rank - 1))
@@ -279,7 +279,7 @@ def run_masked_modules_withloop_and_concat(
         output_shape = [batch_size] + dummy.shape[1:].as_list()
 
     #Used modules is just a list of modules that we are using
-    used_modules = get_unique_modules(selection)
+    # used_modules = get_unique_modules(selection)
 
     condition = lambda accum, selection, i: tf.less(i, 
                                                     module_count)
@@ -292,7 +292,9 @@ def run_masked_modules_withloop_and_concat(
         input_mask = tf.reshape(tf.equal(1., modules), [-1])
         indices = tf.where(input_mask)
         affected_inp = tf.boolean_mask(inputs, input_mask)
-        output = module_fnc(affected_inp, i, mask)
+        selection_mask = tf.boolean_mask(mask, input_mask)
+
+        output = module_fnc(affected_inp, i, selection_mask)
 
         #Add the outputs, scatter_nd makes it the right shape 
         #with 0s for inputs not computed
@@ -326,6 +328,64 @@ def run_masked_modules_withloop_and_concat(
 
     return full_output
 
+def run_non_modular(
+    inputs, selection, mask, module_count,
+    units, module_fnc, output_shape):
+    batch_size = tf.shape(inputs)[0]
+    if output_shape is not None:
+        output_shape = [batch_size] + output_shape
+    else:
+        # This is the only way I am aware of to get the output shape easily
+        dummy = module_fnc(inputs, 0, mask)
+        output_shape = [batch_size] + dummy.shape[1:].as_list()
+
+    #Used modules is just a list of modules that we are using
+    used_modules = get_unique_modules(selection)
+
+    condition = lambda accum, selection, i: tf.less(i, 
+                                                    module_count)
+
+    output_array = tf.TensorArray(dtype=tf.float32,
+                                size=module_count)
+
+    def compute_module(accum, selection, i):
+        modules = tf.slice(selection, [0, i], [tf.shape(selection)[0], 1]) 
+        modules = tf.reshape(modules, [-1])
+        # input_mask = tf.reshape(tf.equal(1., modules), [-1])
+        # indices = tf.where(input_mask)
+        # affected_inp = tf.boolean_mask(inputs, input_mask)
+        output = module_fnc(inputs, i, mask)
+
+        #Add the outputs, scatter_nd makes it the right shape 
+        #with 0s for inputs not computed
+
+        # scatter = tf.scatter_nd(indices, output, tf.cast(output_shape, tf.int64))
+
+        accum_write = accum.write(i, output)
+
+        i = tf.add(i, 1)
+        return accum_write, selection, i
+
+    i = tf.constant(0, tf.int32)
+    output = tf.while_loop(
+        condition, compute_module, [output_array, selection, i])[0]
+
+    full_output = output.stack()
+
+    if full_output.shape.ndims>3:
+        full_output = tf.transpose(full_output, [1,2,3,0,4])
+        full_output = tf.reshape(full_output,
+                                [tf.shape(full_output)[0],
+                                dummy.shape[1].value,
+                                dummy.shape[2].value,
+                                units * module_count])
+    else:
+        full_output = tf.transpose(full_output, [1,0,2])
+        full_output = tf.reshape(full_output,
+                        [tf.shape(full_output)[0],
+                        units * module_count])
+    return full_output
+
 def e_step(template, sample_size, dataset_size, data_indices):
     context = ModularContext(ModularMode.E_STEP, data_indices, dataset_size, sample_size)
 
@@ -345,8 +405,9 @@ def e_step(template, sample_size, dataset_size, data_indices):
 
 def m_step(
     template, optimizer, dataset_size, 
-    data_indices, variational, num_batches, beta, iteration):
-    context = ModularContext(ModularMode.M_STEP, data_indices, dataset_size)
+    data_indices, variational, num_batches, beta, sample_size):
+
+    context = ModularContext(ModularMode.M_STEP, data_indices, dataset_size, sample_size)
 
     if variational == 'False':
         print('NOT VAR')
@@ -376,10 +437,10 @@ def m_step(
 
         # damp = get_damper(iteration, get_damp_list(num_batches))
 
-        KL = context.get_variational_kl(0.0005)
+        KL = context.get_variational_kl(0.05)
         mod_KL = ((beta/num_batches) *  KL)
 
-        joint_objective = - (tf.reduce_sum(loglikelihood) - mod_KL)
+        joint_objective = - (loglikelihood - mod_KL)
 
         tf.summary.scalar('KL', mod_KL, collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
