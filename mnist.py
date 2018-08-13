@@ -53,6 +53,12 @@ def create_summary(list_of_ops_or_op, name, summary_type):
     else:
         raise TypeError('Invalid type for summary')
 
+def sum_and_mean_il(il, sample_size):
+    il = tf.reshape(il, [-1,
+                        sample_size])
+    il = tf.reduce_sum(il, axis=0)
+    return tf.reduce_mean(il, axis=0)
+
 def run():
     """
     Runs the MNIST example
@@ -62,7 +68,7 @@ def run():
 
     dataset_size = x_train.shape[0] #Size of the entire training set
 
-    batch_size = 250
+    batch_size = 125
     num_batches = dataset_size/batch_size
 
     #Placeholders
@@ -80,7 +86,7 @@ def run():
                         dtype=tf.float32)
 
     beta = 1.
-    sample_size = 2
+    sample_size = 1
     inputs = tf.tile(inputs, [sample_size,1])
 
     def network(context: modular.ModularContext, variational=variational):
@@ -89,7 +95,7 @@ def run():
             Instantiation of the ModularContext class
         """
         hidden = inputs
-        units = [16, 8, 4, 2]
+        units = [16]
         layers = len(units)
         s_log = []
         ctrl_logits =[]
@@ -117,7 +123,8 @@ def run():
                 hidden, l, s, bs, pi = modular.variational_mask(hidden, 
                                                                 modules, 
                                                                 context, 
-                                                                0.001)
+                                                                0.001,
+                                                                tf.shape(inputs)[0])
                 pi_log.append(pi)
                 s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
 
@@ -137,8 +144,11 @@ def run():
 
         logits = tf.layers.dense(hidden, 10)
 
-        target = modular.modularize_target(labels, context)
+        # target = modular.modularize_target(labels, context)
+        target = labels
         loglikelihood = tf.distributions.Categorical(logits).log_prob(target)
+
+        # loglikelihood = sum_and_mean_il(loglikelihood, context.sample_size)
 
         predicted = tf.argmax(logits, axis=-1, output_type=tf.int32)
         accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, target), tf.float32))
@@ -154,7 +164,7 @@ def run():
     if variational == 'True':
         m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
                                                   data_indices, variational, num_batches, beta,
-                                                  iteration)
+                                                  sample_size)
     else:
         e_step, m_step, eval = modular.modularize(template, optimizer, dataset_size,
                                                   data_indices, sample_size=10, variational=variational)
@@ -181,9 +191,9 @@ def run():
             # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
 
             if REALRUN=='True':
-                writer = tf.summary.FileWriter(f'logs/train:_4layer_16modules_a:.1.6_b:0.1_alpha:0.1_beta:1_lr:0.0005_modKL_doublesmaple_{time}',
+                writer = tf.summary.FileWriter(f'logs/train:_4layer_16modules_a:.1.6_b:0.1_alpha:0.1_beta:1_lr:0.05_modKL_doubl_{time}',
                                                 sess.graph)
-                test_writer = tf.summary.FileWriter(f'logs/test:_4layer_16modules_a:1.6_b:0.1_alpha:0.1_beta:1_lr:0.0005_modKL_doublesmaple_{time}',
+                test_writer = tf.summary.FileWriter(f'logs/test:_4layer_16modules_a:1.6_b:0.1_alpha:0.1_beta:1_lr:0.05_modKL_doubl_{time}',
                                                     sess.graph)
             general_summaries = tf.summary.merge_all()
             m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
@@ -198,14 +208,12 @@ def run():
                         }
                 sess.run(e_step, feed_dict)
 
-            j=0
             batches = generator([x_train, y_train, np.arange(dataset_size)], batch_size)
             for i, (batch_x, batch_y, indices) in tqdm(enumerate(batches)):
                 feed_dict = {
                     inputs: batch_x,
                     labels: batch_y,
-                    data_indices: indices,
-                    iteration: j
+                    data_indices: indices
                 }
                 if variational == 'True':
                     step = m_step
@@ -216,18 +224,14 @@ def run():
                 if REALRUN=='True':
                     writer.add_summary(summary_data, global_step=i)
 
-                if i % 400 == 0:
-                    test_feed_dict = {inputs: x_test, labels: y_test, data_indices: np.arange(x_test.shape[0]),
-                                        iteration: j}
-                    summary_data = sess.run(m_step_summaries, test_feed_dict)
+                # if i % 400 == 0:
+                #     test_feed_dict = {inputs: x_test, labels: y_test, data_indices: np.arange(x_test.shape[0])}
+                                        
+                #     summary_data = sess.run(m_step_summaries, test_feed_dict)
 
-                    if REALRUN=='True':
-                        test_writer.add_summary(summary_data, global_step=i)
+                #     if REALRUN=='True':
+                #         test_writer.add_summary(summary_data, global_step=i)
 
-                if i % (dataset_size//batch_size) == 0:
-                    j=0
-                else:
-                    j+=1
 
             writer.close()
             test_writer.close()

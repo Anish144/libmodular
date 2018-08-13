@@ -17,7 +17,7 @@ VariationalLayerAttributes = namedtuple('ModularLayerAttributes',
                                     ['selection', 'controller', 'a', 'b', 'beta', 'beta_prior']
                                     )
 ModulePool = namedtuple('ModulePool', ['module_count', 'module_fnc', 'output_shape',
-                                        'units'])
+                                        'units', 'weight', 'bias'])
 
 
 class ModularContext:
@@ -269,13 +269,14 @@ def run_masked_modules_withloop(inputs, selection, mask, module_fnc, output_shap
 
 def run_masked_modules_withloop_and_concat(
     inputs, selection, mask, module_count,
-    units, module_fnc, output_shape):
+    units, module_fnc, output_shape, weight, bias):
+
     batch_size = tf.shape(inputs)[0]
     if output_shape is not None:
         output_shape = [batch_size] + output_shape
     else:
         # This is the only way I am aware of to get the output shape easily
-        dummy = module_fnc(inputs, 0, mask)
+        dummy = module_fnc(inputs, 0, mask, weight, bias)
         output_shape = [batch_size] + dummy.shape[1:].as_list()
 
     #Used modules is just a list of modules that we are using
@@ -291,10 +292,15 @@ def run_masked_modules_withloop_and_concat(
         modules = tf.slice(selection, [0, i], [tf.shape(selection)[0], 1]) 
         input_mask = tf.reshape(tf.equal(1., modules), [-1])
         indices = tf.where(input_mask)
-        affected_inp = tf.boolean_mask(inputs, input_mask)
-        selection_mask = tf.boolean_mask(mask, input_mask)
 
-        output = module_fnc(affected_inp, i, selection_mask)
+        affected_inp = tf.boolean_mask(inputs, input_mask)
+        select_mask = tf.boolean_mask(mask, input_mask)
+        select_weight = tf.boolean_mask(weight, input_mask)
+        select_bias = tf.boolean_mask(bias, input_mask)
+
+
+        output = module_fnc(affected_inp, i, select_mask, 
+                            select_weight, select_bias)
 
         #Add the outputs, scatter_nd makes it the right shape 
         #with 0s for inputs not computed

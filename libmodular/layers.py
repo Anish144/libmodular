@@ -6,6 +6,18 @@ from libmodular.modular import ModulePool, ModularContext, ModularMode, ModularL
 from libmodular.modular import run_modules, run_masked_modules, e_step, m_step, evaluation, run_masked_modules_withloop, run_modules_withloop, run_masked_modules_withloop_and_concat, run_non_modular
 from tensorflow.python import debug as tf_debug
 
+
+def run_once(f):
+    def wrapper(*args, **kwargs):
+        if not wrapper.has_run:
+            wrapper.has_run = True
+            return f(*args, **kwargs)
+        else:
+            return args, kwargs
+    wrapper.has_run = False
+    return wrapper
+
+
 def create_dense_modules(inputs_or_shape, module_count: int, units: int = None, activation=None):
     """
     Takes in input, module count, units, and activation and returns a named tuple with a function
@@ -22,19 +34,21 @@ def create_dense_modules(inputs_or_shape, module_count: int, units: int = None, 
         biases = tf.get_variable(
             'biases', biases_shape, initializer=tf.zeros_initializer())
 
-        def module_fnc(x, a, mask):
+        def module_fnc(x, a, mask, w, b):
             """
             Takes in input and a module, multiplies input with the weights of the module
             weights are [module x input_shape x units]
             """
-            new_weights = tf.einsum('mio,bm->mbio', weights, tf.cast(mask, tf.float32))
-            new_biases = tf.einsum('mo,bm->mbo', biases, tf.cast(mask, tf.float32))
-            out = tf.einsum('bi,bio->bo', x, new_weights[a]) + new_biases[a]
+            #Put modules in the lef tmost axis
+            w = tf.transpose(w, [1,0,2,3])
+            b = tf.transpose(b, [1,0,2])
+            out = tf.einsum('bi,bio->bo', x, w[a]) + b[a]
             if activation is not None:
                 out = activation(out)
             return out
 
-        return ModulePool(module_count, module_fnc, output_shape=[units], units=units)
+        return ModulePool(module_count, module_fnc, output_shape=[units], units=units,
+            weight=weights, bias=biases)
 
 
 def conv_layer(x, shape, strides, padding='SAME'):
@@ -60,23 +74,26 @@ def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
         biases = tf.get_variable(
             'biases', biases_shape, initializer=tf.zeros_initializer())
 
-        def module_fnc(x, a, mask):
+        def module_fnc(x, a, mask, weight, bias):
             fw,fh,d = shape[0], shape[1], shape[-1]
             h,w,c = x.shape[1].value, x.shape[2].value, x.shape[-1].value
-            new_biases = tf.einsum('mo,bm->mbo', biases, mask)
-            new_filter = tf.einsum('miocd,bm->mbiocd', filter, mask)
+            b = tf.shape(x)[0]
+            new_filter = tf.transpose(weight,
+                                    [1,0,2,3,4,5])
+            new_biases = tf.transpose(bias,
+                                    [1,0,2])
             new_biases = new_biases[a]
             new_filter = new_filter[a]
             #[fh,fw,b,c,d]
             filter_transpose = tf.transpose(new_filter, [1,2,0,3,4])
             #[fh,fw,b*c,d]
             filter_reshape = tf.reshape(filter_transpose, 
-                                        [fw, fh, -1, d])
+                                        [fw, fh, b*c, d])
             #[h,w,b,c]
             inputs_transpose = tf.transpose(x, [1,2,0,3])
             #[1,h,w,b*c]
             inputs_reshape = tf.reshape(inputs_transpose, 
-                                        [1, h, w, -1])
+                                        [1, h, w, b*c])
 
             out = tf.nn.depthwise_conv2d(
                       inputs_reshape,
@@ -94,6 +111,9 @@ def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
 
             return out
 
+        def module_fnc_original(x, a, mask, weight, bias):
+            return tf.nn.conv2d(x, weight[a], strides, padding) + bias[a]
+
         def module_fnc_non_modular(x, a, mask):
             new_biases = tf.einsum('m,m->m', biases, mask)
             new_filter = tf.einsum('iocm,m->mioc', filter, mask)
@@ -103,7 +123,8 @@ def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
             new_filter = tf.transpose(new_filter, [1,2,3,0])
             return tf.nn.conv2d(x, new_filter, strides, padding) + new_biases[a]
 
-        return ModulePool(module_count, module_fnc, output_shape=None, units=list(shape)[-1])
+        return ModulePool(module_count, module_fnc, output_shape=None, 
+                        units=list(shape)[-1], weight=filter, bias=biases)
 
 
 def batch_norm(inputs):
@@ -233,7 +254,7 @@ def variational_mask(
         b = tf.get_variable(name='b', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform(
-                                [shape], minval=2.6, maxval=2.6)) + 1e-20
+                                [shape], minval=0.2, maxval=0.2)) + 1e-20
 
         # a = tf.check_numerics(a, 'NaN is at a')
         # b = tf.check_numerics(b, 'NaN is at b')
@@ -241,17 +262,25 @@ def variational_mask(
         pi = get_pi(a, b, u_shape)
 
         tau = 0.001
-        z = relaxed_bern(tau, pi, [tile_shape] + pi.shape.as_list())
+        z = relaxed_bern(tau, pi, pi.shape.as_list())
 
 
-        z = tf.reshape(z, [-1, shape])
-
+        z = tf.tile(
+            z,
+            [tile_shape, 1])
 
 
         if context.mode == ModularMode.M_STEP:
             test_pi = pi
             selection = tf.round(z)
             final_selection = selection
+            # final_selection = tf.tile(
+            #                     selection,
+            #                     [tile_shape])
+            # final_selection = tf.reshape(
+            #                     final_selection,
+            #                     [tile_shape, shape])
+
 
         elif context.mode == ModularMode.EVALUATION:
             test_pi = get_test_pi(a, b)
@@ -271,13 +300,22 @@ def variational_mask(
                                         None, None, None)
         context.layers.append(attrs)
 
+        if inputs.shape.ndims > 3:
+            new_biases = tf.einsum('mo,bm->bmo', modules.bias, z)
+            new_weights = tf.einsum('miocd,bm->bmiocd', modules.weight, z)
+        else:
+            new_weights = tf.einsum('mio,bm->bmio', modules.weight, tf.cast(z, tf.float32))
+            new_biases = tf.einsum('mo,bm->bmo', modules.bias, tf.cast(z, tf.float32))
+
         return (run_masked_modules_withloop_and_concat(inputs, 
                                     final_selection,
                                     z,
                                     shape,
                                     modules.units,
                                     modules.module_fnc, 
-                                    modules.output_shape), 
+                                    modules.output_shape,
+                                    new_weights,
+                                    new_biases), 
                 pi, selection, test_pi, test_pi)
 
         # return (run_non_modular(inputs,

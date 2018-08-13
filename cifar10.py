@@ -48,8 +48,8 @@ def create_summary(list_of_ops_or_op, name, summary_type):
     else:
         raise TypeError('Invalid type for summary')
 
-def sum_and_mean_il(il, sample_size):
-    il = tf.reshape(il, [-1,
+def sum_and_mean_il(il, sample_size, tile_shape):
+    il = tf.reshape(il, [tile_shape,
                         sample_size])
     il = tf.reduce_sum(il, axis=0)
     return tf.reduce_mean(il, axis=0)
@@ -63,7 +63,7 @@ def run():
 
     dataset_size = x_train.shape[0]
 
-    batch_size = 125
+    batch_size = 250
     num_batches = dataset_size/batch_size
 
     # Train dataset
@@ -86,7 +86,7 @@ def run():
 
     masked_bernoulli = False
     beta = 1.
-    sample_size = 5
+    sample_size = 2
 
 
     def network(context: modular.ModularContext, 
@@ -161,7 +161,7 @@ def run():
         target = modular.modularize_target(labels_cast, context)
         loglikelihood = tf.distributions.Categorical(logits).log_prob(target)
 
-        loglikelihood = sum_and_mean_il(loglikelihood, context.sample_size)
+        loglikelihood = sum_and_mean_il(loglikelihood, context.sample_size, tf.shape(inputs_tr)[0])
 
         predicted = tf.argmax(logits, axis=-1, output_type=tf.int32)
         accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, target), tf.float32))
@@ -243,9 +243,9 @@ def run():
             # test_writer = tf.summary.FileWriter(
             #     f'logs/test:Variational_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1__nostopgrads__withetakhigamma{time}', sess.graph)
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_Variationl_straightthrough_4layer_a:2.6_b:2.6_alpha:0.05_beta:_MODULAR_MULTIPLESAMPLE_{time}', sess.graph)
+                f'logs/test:Cifar10_Variationl_straightthrough_4layer_a:2.6_b:0.2_alpha:0.05_beta:1_DEBUG_RUN3_maskshape:[batch*sample,modules]_batch_has_same_selection_sample_size:2_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_Variationl_straightthrough_4layer_a:2.6_b:2.6_alpha:0.05_beta:_MODULAR_MULTIPLESAMPLE_{time}', sess.graph)
+                f'logs/train:Cifar10_Variationl_straightthrough_4layer_a:2.6_b:0.2_alpha:0.05_beta:1_DEBUG_RUN3_maskshape:[batch*sample,modules]_batch_has_same_selection_sample_size:2_{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
