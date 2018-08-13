@@ -226,7 +226,7 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext, initializ
 
 def variational_mask(
     inputs, modules: ModulePool, 
-    context: ModularContext, eps, tile_shape):
+    context: ModularContext, eps, tile_shape, initializer):
     """
     Constructs a Bernoulli masked layer that outputs sparse 
     binary masks dependent on the input
@@ -245,7 +245,7 @@ def variational_mask(
 
         shape = modules.module_count
         input_shape = flat_inputs.shape[-1].value
-        u_shape = [context.sample_size, shape]
+        u_shape = [shape]
 
         a = tf.get_variable(name='a', 
                             dtype=tf.float32, 
@@ -254,7 +254,7 @@ def variational_mask(
         b = tf.get_variable(name='b', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform(
-                                [shape], minval=0.2, maxval=0.2)) + 1e-20
+                                [shape], minval=2.6, maxval=2.6)) + 1e-20
 
         # a = tf.check_numerics(a, 'NaN is at a')
         # b = tf.check_numerics(b, 'NaN is at b')
@@ -264,38 +264,44 @@ def variational_mask(
         tau = 0.001
         z = relaxed_bern(tau, pi, pi.shape.as_list())
 
-
         z = tf.tile(
             z,
-            [tile_shape, 1])
+            [tf.shape(inputs)[0]])
 
+        z = tf.reshape(
+            z,
+            [tf.shape(inputs)[0], shape])
+
+        shape_persistent = [context.dataset_size, modules.module_count]
+        best_selection_persistent = tf.get_variable('best_selection', 
+                                                    shape=shape_persistent, 
+                                                    dtype=tf.int32, 
+                                                    initializer=initializer)
 
         if context.mode == ModularMode.M_STEP:
+            final_selection = tf.gather(best_selection_persistent, context.data_indices)
             test_pi = pi
-            selection = tf.round(z)
-            final_selection = selection
-            # final_selection = tf.tile(
-            #                     selection,
-            #                     [tile_shape])
-            # final_selection = tf.reshape(
-            #                     final_selection,
-            #                     [tile_shape, shape])
-
-
+        elif context.mode == ModularMode.E_STEP:
+            best_selection = tf.gather(best_selection_persistent, context.data_indices)[tf.newaxis]
+            samples = tf.cast(tf.round(z), tf.int32)
+            sampled_selection = tf.reshape(samples, [context.sample_size, -1, modules.module_count]) 
+            selection = tf.concat([best_selection, sampled_selection[1:]], axis=0)
+            final_selection = tf.reshape(selection, [-1, modules.module_count])
+            test_pi = pi        
         elif context.mode == ModularMode.EVALUATION:
             test_pi = get_test_pi(a, b)
-            selection = tf.where(test_pi>0.5,
+            selection = tf.cast(tf.where(test_pi>0.5,
                                 x=tf.ones_like(test_pi),
                                 y=tf.zeros_like(test_pi)
-                                )
+                                ), tf.int32)
             final_selection = tf.tile(
                 selection, [tf.shape(flat_inputs)[0]])
             final_selection = tf.reshape(
                 final_selection,[tf.shape(flat_inputs)[0], shape])
 
         pseudo_ctrl = tfd.Bernoulli(probs=pi)
-        attrs = ModularLayerAttributes(selection, 
-                                        None, pseudo_ctrl, 
+        attrs = ModularLayerAttributes(final_selection, 
+                                        best_selection_persistent, pseudo_ctrl, 
                                         a, b, pi, None, None,
                                         None, None, None)
         context.layers.append(attrs)
@@ -316,7 +322,7 @@ def variational_mask(
                                     modules.output_shape,
                                     new_weights,
                                     new_biases), 
-                pi, selection, test_pi, test_pi)
+                pi, tf.round(z), test_pi, best_selection_persistent)
 
         # return (run_non_modular(inputs,
         #                     final_selection,
@@ -391,7 +397,7 @@ def get_u(shape):
     return tf.random_uniform(shape, maxval=1)
 
 def modularize_target(target, context: ModularContext):
-    if context.mode == ModularMode.M_STEP:
+    if context.mode == ModularMode.E_STEP:
         rank = target.shape.ndims
         return tf.tile(target, [context.sample_size] + [1] * (rank-1))
     return target
@@ -409,8 +415,9 @@ def modularize_variational(template, optimizer, dataset_size,
                          sample_size):
     m = m_step(template, optimizer, dataset_size, data_indices, 
                variational, num_batches, beta, sample_size)
+    e = e_step(template, sample_size, dataset_size, data_indices)
     eval = evaluation(template, data_indices, dataset_size)
-    return m, eval
+    return e, m, eval
 
 def create_ema_opt():
     return tf.group(*tf.get_collection('ema'))

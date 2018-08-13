@@ -35,7 +35,7 @@ class ModularContext:
         self.variational = variational
 
     def begin_modular(self, inputs):
-        if self.mode == ModularMode.M_STEP and not self.e_step_samples:
+        if self.mode == ModularMode.E_STEP and not self.e_step_samples:
             self.e_step_samples = True
             rank = inputs.shape.ndims
             return tf.tile(inputs, [self.sample_size] +[1] * (rank - 1))
@@ -290,7 +290,7 @@ def run_masked_modules_withloop_and_concat(
 
     def compute_module(accum, selection, i):
         modules = tf.slice(selection, [0, i], [tf.shape(selection)[0], 1]) 
-        input_mask = tf.reshape(tf.equal(1., modules), [-1])
+        input_mask = tf.reshape(tf.equal(1, modules), [-1])
         indices = tf.where(input_mask)
 
         affected_inp = tf.boolean_mask(inputs, input_mask)
@@ -431,22 +431,14 @@ def m_step(
         tf.summary.scalar('ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
     else:
         print('VAR')
-        loglikelihood = template(context)[0]
-        # log_pi = context.get_pi_logprob(0.005)
-        # log_kum = context.get_kumaraswamy_logprob()
-        # log_pi = tf.check_numerics(log_pi, 'logpi')
-        # log_kum = tf.check_numerics(log_kum, 'log_kum')
-        # score_term = (beta/num_batches) * (log_pi - log_kum)
+        loglikelihood = tf.reduce_sum(template(context)[0])
 
-        # joint_objective = - (tf.reduce_sum(loglikelihood) + score_term)
-
-
-        # damp = get_damper(iteration, get_damp_list(num_batches))
+        selection_logprob = tf.reduce_sum(context.selection_logprob())
 
         KL = context.get_variational_kl(0.05)
         mod_KL = ((beta/num_batches) *  KL)
 
-        joint_objective = - (loglikelihood - mod_KL)
+        joint_objective = - (loglikelihood + selection_logprob - mod_KL)
 
         tf.summary.scalar('KL', mod_KL, collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])

@@ -86,7 +86,7 @@ def run():
 
     masked_bernoulli = False
     beta = 1.
-    sample_size = 2
+    sample_size = 10
 
 
     def network(context: modular.ModularContext, 
@@ -123,7 +123,8 @@ def run():
             elif variational == 'True':
                 print('Variational')
                 hidden, l, s, pi, bs = modular.variational_mask(
-                    activation, modules, context, 0.001, tf.shape(inputs_tr)[0])
+                    activation, modules, context, 0.001, tf.shape(inputs_tr)[0],
+                    get_initialiser(dataset_size, 5, module_count))
                 # hidden = modular.batch_norm(hidden)
 
             else:
@@ -142,14 +143,15 @@ def run():
 
         flattened = tf.layers.flatten(activation)
 
-        modules_list = [8, 4]
+        modules_list = [8, 6]
         for i in range(len(modules_list)):
             module_count = modules_list[i]
             modules = modular.create_dense_modules(
                 flattened, module_count,
                 units=8, activation=tf.nn.relu)
             flattened, l, s, pi, bs = modular.variational_mask(
-                flattened, modules, context, 0.001,  tf.shape(inputs_tr)[0])
+                flattened, modules, context, 0.001,  tf.shape(inputs_tr)[0],
+                get_initialiser(dataset_size, 5, module_count))
 
             ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
             s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
@@ -160,8 +162,6 @@ def run():
 
         target = modular.modularize_target(labels_cast, context)
         loglikelihood = tf.distributions.Categorical(logits).log_prob(target)
-
-        loglikelihood = sum_and_mean_il(loglikelihood, context.sample_size, tf.shape(inputs_tr)[0])
 
         predicted = tf.argmax(logits, axis=-1, output_type=tf.int32)
         accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, target), tf.float32))
@@ -197,7 +197,7 @@ def run():
                                                   data_indices, sample_size=10, 
                                                   variational=variational)
     else:
-        m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
+        e_step, m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
                                                   data_indices, variational, num_batches, 
                                                   beta, sample_size)
 
@@ -243,9 +243,9 @@ def run():
             # test_writer = tf.summary.FileWriter(
             #     f'logs/test:Variational_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1__nostopgrads__withetakhigamma{time}', sess.graph)
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_Variationl_straightthrough_4layer_a:2.6_b:0.2_alpha:0.05_beta:1_DEBUG_RUN3_maskshape:[batch*sample,modules]_batch_has_same_selection_sample_size:2_{time}', sess.graph)
+                f'logs/test:Cifar10_Variationl_straightthrough_4layer_a:2.6_b:2.6_alpha:0.05_beta:1_DEBUG_RUN4_VITERBI_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_Variationl_straightthrough_4layer_a:2.6_b:0.2_alpha:0.05_beta:1_DEBUG_RUN3_maskshape:[batch*sample,modules]_batch_has_same_selection_sample_size:2_{time}', sess.graph)
+                f'logs/train:Cifar10_Variationl_straightthrough_4layer_a:2.6_b:2.6_alpha:0.05_beta:1_DEBUG_RUN4_VITERBI_{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
