@@ -411,7 +411,7 @@ def e_step(template, sample_size, dataset_size, data_indices):
 
 def m_step(
     template, optimizer, dataset_size, 
-    data_indices, variational, num_batches, beta, sample_size):
+    data_indices, variational, num_batches, beta, sample_size, iteration):
 
     context = ModularContext(ModularMode.M_STEP, data_indices, dataset_size, sample_size)
 
@@ -441,10 +441,10 @@ def m_step(
         # joint_objective = - (tf.reduce_sum(loglikelihood) + score_term)
 
 
-        # damp = get_damper(iteration, get_damp_list(num_batches))
+        damp = get_damper(iteration, get_damp_list(num_batches))
 
         KL = context.get_variational_kl(0.05)
-        mod_KL = ((beta/num_batches) *  KL)
+        mod_KL = (1/num_batches) * KL
 
         joint_objective = - (loglikelihood - mod_KL)
 
@@ -452,6 +452,15 @@ def m_step(
         tf.summary.scalar('ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
         module_objective =  tf.reduce_sum(loglikelihood)
         tf.summary.scalar('module_objective', -module_objective, collections=[M_STEP_SUMMARIES])
+        # tf.summary.scalar('damp', tf.reduce_sum(damp), collections=[M_STEP_SUMMARIES])
+
+
+        tf.add_to_collection(name='mod_KL',
+                            value=mod_KL)
+        # tf.add_to_collection(name='Damp',
+        #                     value=damp)
+        tf.add_to_collection(name='KL',
+                            value=KL)
 
     # with tf.control_dependencies([moving_average]):
     opt = optimizer.minimize(joint_objective)
@@ -459,13 +468,14 @@ def m_step(
     return opt
 
 def get_damper(iteration, damp_list):
-    return tf.reduce_sum(tf.slice(damp_list, [tf.cast(iteration,tf.int32)], [1]))
+    return tf.slice(damp_list, [tf.cast(iteration,tf.int32)], [1])
 
 def get_damp_list(num_batches):
     iteration = tf.range(num_batches)
     term_1 = (num_batches-iteration)*tf.log(2.)
-    term_2 = tf.log(tf.exp(num_batches*tf.log(2.)) - 1.)
+    term_2 = num_batches*tf.log(2.)
     damp = tf.exp(term_1 - term_2)
+    damp = damp/tf.reduce_sum(damp)
     return damp
 
 def evaluation(template, data_indices, dataset_size):
@@ -484,3 +494,13 @@ def get_unique_modules(selection):
 
 def create_m_step_summaries():
     return tf.summary.merge_all(key=M_STEP_SUMMARIES)
+
+def get_tensor_op():
+    return tf.get_collection('mod_KL')
+
+def get_op():
+    return tf.get_collection('Damp')
+
+def get_KL():
+    return tf.get_collection('KL')
+

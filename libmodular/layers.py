@@ -250,7 +250,7 @@ def variational_mask(
         a = tf.get_variable(name='a', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform(
-                                [shape], minval=2.6, maxval=2.6)) + 1e-20
+                                [shape], minval=2.9, maxval=2.9)) + 1e-20
         b = tf.get_variable(name='b', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform(
@@ -261,14 +261,13 @@ def variational_mask(
 
         pi = get_pi(a, b, u_shape)
 
-        tau = 0.001
+        tau = 0.01
         z = relaxed_bern(tau, pi, pi.shape.as_list())
 
 
         z = tf.tile(
             z,
             [tile_shape, 1])
-
 
         if context.mode == ModularMode.M_STEP:
             test_pi = pi
@@ -284,7 +283,7 @@ def variational_mask(
 
         elif context.mode == ModularMode.EVALUATION:
             test_pi = get_test_pi(a, b)
-            selection = tf.where(test_pi>0.5,
+            selection = tf.where(test_pi>0.75,
                                 x=tf.ones_like(test_pi),
                                 y=tf.zeros_like(test_pi)
                                 )
@@ -406,9 +405,9 @@ def modularize(template, optimizer, dataset_size, data_indices,
 
 def modularize_variational(template, optimizer, dataset_size, 
                           data_indices, variational, num_batches, beta,
-                         sample_size):
+                         sample_size, iteration):
     m = m_step(template, optimizer, dataset_size, data_indices, 
-               variational, num_batches, beta, sample_size)
+               variational, num_batches, beta, sample_size, iteration)
     eval = evaluation(template, data_indices, dataset_size)
     return m, eval
 

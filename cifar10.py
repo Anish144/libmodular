@@ -8,13 +8,14 @@ from tqdm import tqdm
 import sys
 from tensorflow.python import debug as tf_debug
 # import matplotlib.pyplot as plt
-from libmodular.modular import create_m_step_summaries, M_STEP_SUMMARIES
+from libmodular.modular import create_m_step_summaries, M_STEP_SUMMARIES, get_tensor_op, get_op, get_KL
 from libmodular.layers import create_ema_opt
 
 REALRUN = sys.argv[1]
 E_step = sys.argv[2]
 masked_bernoulli = sys.argv[3]
 variational = sys.argv[4]
+beta = float(sys.argv[5])
 
 def get_initialiser(data_size, n, module_count):
     choice = np.zeros((data_size, n), dtype=int)
@@ -85,9 +86,11 @@ def run():
     labels_cast = tf.cast(labels, tf.int32)
 
     masked_bernoulli = False
-    beta = 1.
-    sample_size = 2
+    sample_size = 4
 
+    iteration_number = tf.placeholder(dtype=tf.float32,
+                                shape=[],
+                                name='iteration_number')
 
     def network(context: modular.ModularContext, 
                 masked_bernoulli=False, 
@@ -105,7 +108,7 @@ def run():
         #     filter_shape = [3, 3, input_channels, 8]
         #     activation = modular.conv_layer(activation, filter_shape, strides=[1,1,1,1])
 
-        modules_list = [16, 32, 64]
+        modules_list = [32, 32, 64, 64, 128, 128]
         for j in range(len(modules_list)):
             input_channels = activation.shape[-1]
             module_count = modules_list[j]
@@ -142,12 +145,12 @@ def run():
 
         flattened = tf.layers.flatten(activation)
 
-        modules_list = [8, 4]
+        modules_list = [16, 8]
         for i in range(len(modules_list)):
             module_count = modules_list[i]
             modules = modular.create_dense_modules(
                 flattened, module_count,
-                units=8, activation=tf.nn.relu)
+                units=2, activation=tf.nn.relu)
             flattened, l, s, pi, bs = modular.variational_mask(
                 flattened, modules, context, 0.001,  tf.shape(inputs_tr)[0])
 
@@ -197,9 +200,10 @@ def run():
                                                   data_indices, sample_size=10, 
                                                   variational=variational)
     else:
+        num_batches = 2.
         m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
                                                   data_indices, variational, num_batches, 
-                                                  beta, sample_size)
+                                                  beta, sample_size, iteration_number)
 
     #Summaries
     params = context.layers
@@ -243,9 +247,9 @@ def run():
             # test_writer = tf.summary.FileWriter(
             #     f'logs/test:Variational_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1__nostopgrads__withetakhigamma{time}', sess.graph)
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_Variationl_straightthrough_4layer_a:2.6_b:0.2_alpha:0.05_beta:1_DEBUG_RUN3_maskshape:[batch*sample,modules]_batch_has_same_selection_sample_size:2_{time}', sess.graph)
+                f'logs/test:Cifar10_Variationl_straightthrough_4layer_a:2.9_b:0.2_alpha:0.05_beta:'+str(beta)+f'_DEBUG_RUN12_maskshape:[batch*sample,modules]_batch_has_same_selection_sample_size:4_EVAL_THRESHOLDAT:0.75_tau:0.01_BIGRUN_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_Variationl_straightthrough_4layer_a:2.6_b:0.2_alpha:0.05_beta:1_DEBUG_RUN3_maskshape:[batch*sample,modules]_batch_has_same_selection_sample_size:2_{time}', sess.graph)
+                f'logs/train:Cifar10_Variationl_straightthrough_4layer_a:2.9_b:0.2_alpha:0.05_beta:'+str(beta)+f'_DEBUG_RUN12_maskshape:[batch*sample,modules]_batch_has_same_selection_sample_size:4_EVAL_THRESHOLDAT:0.75_tau:0.01_BIGRUN_{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
@@ -258,25 +262,25 @@ def run():
             for i in tqdm(range(200)):
                 _ = sess.run(e_step, train_dict)
 
-        j=0
+        j_s = 0.
         for i in tqdm(range(400000)):
             # Switch between E-step and M-step
-            # train_dict['iteration'] = j
-            # test_dict['iteration'] = j
+            train_dict[iteration_number] = j_s
+            test_dict[iteration_number] = j_s
 
 
             if variational == 'True':
                 step = m_step
             else:
-                # if i > 1500:
                 step = e_step if i % 1 == 0 else m_step
 
             # Sometimes generate summaries
             if i % 400 == 0: 
                 summaries = m_step_summaries
-                _, summary_data, test_accuracy, log, select = sess.run(
-                    [step, summaries, accuracy, ctrl_logits[0], s_log[0]], 
+                _, summary_data, test_accuracy = sess.run(
+                    [step, summaries, accuracy], 
                     train_dict)
+
 
                 # non_zeros = np.zeros((log.shape[0], log.shape[1]))
                 # j=0
@@ -305,14 +309,16 @@ def run():
                                       simple_value = final_accuracy)
                     test_writer.add_summary(summary, global_step=i)
 
-
             else:
                 sess.run(step, train_dict)
+                # print('modKL:', modKL)
+                # print('damp:', damp)
+                # print('KL', KL)
 
             if i % (dataset_size//batch_size) == 0:
-                j=0
+                j_s=0.
             else:
-                j+=1
+                j_s+=1
 
         if REALRUN=='True':
             writer.close()

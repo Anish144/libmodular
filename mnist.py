@@ -87,7 +87,10 @@ def run():
 
     beta = 1.
     sample_size = 1
-    inputs = tf.tile(inputs, [sample_size,1])
+
+    iteration_number = tf.placeholder(dtype=tf.float32,
+                                shape=[],
+                                name='iteration_number')
 
     def network(context: modular.ModularContext, variational=variational):
         """
@@ -144,11 +147,11 @@ def run():
 
         logits = tf.layers.dense(hidden, 10)
 
-        # target = modular.modularize_target(labels, context)
+        target = modular.modularize_target(labels, context)
         target = labels
         loglikelihood = tf.distributions.Categorical(logits).log_prob(target)
 
-        # loglikelihood = sum_and_mean_il(loglikelihood, context.sample_size)
+        loglikelihood = sum_and_mean_il(loglikelihood, context.sample_size)
 
         predicted = tf.argmax(logits, axis=-1, output_type=tf.int32)
         accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, target), tf.float32))
@@ -164,7 +167,7 @@ def run():
     if variational == 'True':
         m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
                                                   data_indices, variational, num_batches, beta,
-                                                  sample_size)
+                                                  sample_size, iteration_number)
     else:
         e_step, m_step, eval = modular.modularize(template, optimizer, dataset_size,
                                                   data_indices, sample_size=10, variational=variational)
@@ -208,12 +211,14 @@ def run():
                         }
                 sess.run(e_step, feed_dict)
 
+            j=0.    
             batches = generator([x_train, y_train, np.arange(dataset_size)], batch_size)
             for i, (batch_x, batch_y, indices) in tqdm(enumerate(batches)):
                 feed_dict = {
                     inputs: batch_x,
                     labels: batch_y,
-                    data_indices: indices
+                    data_indices: indices,
+                    iteration_number: j
                 }
                 if variational == 'True':
                     step = m_step
@@ -231,7 +236,10 @@ def run():
 
                 #     if REALRUN=='True':
                 #         test_writer.add_summary(summary_data, global_step=i)
-
+                if i % (dataset_size//batch_size) == 0:
+                    j=0
+                else:
+                    j+=1
 
             writer.close()
             test_writer.close()
