@@ -114,13 +114,13 @@ def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
         def module_fnc_original(x, a, mask, weight, bias):
             return tf.nn.conv2d(x, weight[a], strides, padding) + bias[a]
 
-        def module_fnc_non_modular(x, a, mask):
-            new_biases = tf.einsum('m,m->m', biases, mask)
-            new_filter = tf.einsum('iocm,m->mioc', filter, mask)
+        def module_fnc_non_modular(x, a, mask, weight, bias):
+            new_filter = tf.transpose(weight,
+                                    [1,0,2,3,4,5])
+            new_biases = tf.transpose(bias,
+                                    [1,0,2])
+            new_biases = new_biases[a]
             new_filter = new_filter[a]
-            h,w,c = shape[0:3]
-            new_filter = tf.reshape(new_filter, [1,h,w,c])
-            new_filter = tf.transpose(new_filter, [1,2,3,0])
             return tf.nn.conv2d(x, new_filter, strides, padding) + new_biases[a]
 
         return ModulePool(module_count, module_fnc, output_shape=None, 
@@ -250,7 +250,7 @@ def variational_mask(
         a = tf.get_variable(name='a', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform(
-                                [shape], minval=2.9, maxval=2.9)) + 1e-20
+                                [shape], minval=2.2, maxval=2.2)) + 1e-20
         b = tf.get_variable(name='b', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform(
@@ -261,7 +261,7 @@ def variational_mask(
 
         pi = get_pi(a, b, u_shape)
 
-        tau = 0.01
+        tau = 0.1
         z = relaxed_bern(tau, pi, pi.shape.as_list())
 
 
@@ -283,7 +283,7 @@ def variational_mask(
 
         elif context.mode == ModularMode.EVALUATION:
             test_pi = get_test_pi(a, b)
-            selection = tf.where(test_pi>0.75,
+            selection = tf.where(test_pi>0.5,
                                 x=tf.ones_like(test_pi),
                                 y=tf.zeros_like(test_pi)
                                 )
@@ -325,6 +325,92 @@ def variational_mask(
         #                     modules.module_fnc, 
         #                     modules.output_shape), 
         #                 pi, selection, test_pi, test_pi)
+
+
+def beta_bernoulli(
+    inputs, modules: ModulePool, 
+    context: ModularContext, eps, tile_shape):
+
+    with tf.variable_scope(None, 'beta_bernoulli'):
+
+        inputs = context.begin_modular(inputs)
+        flat_inputs = tf.stop_gradient(tf.layers.flatten(inputs))
+        input_shape = flat_inputs.shape[-1].value
+
+        shape = modules.module_count
+        input_shape = flat_inputs.shape[-1].value
+
+        std = tf.pow(tf.divide(2., input_shape + modules.module_count), 0.5)
+        initializer_a = tf.truncated_normal_initializer(mean=0., stddev=std)
+        initializer_b = tf.truncated_normal_initializer(mean=0., stddev=std)
+
+        a = tf.layers.dense(
+                flat_inputs, modules.module_count,
+                activation=tf.nn.relu, kernel_initializer=initializer_a)
+        b = tf.layers.dense(
+                flat_inputs, modules.module_count,
+                activation=tf.nn.relu, kernel_initializer=initializer_b)
+
+        u_shape = [tf.shape(a)[0], tf.shape(a)[1]]
+
+        pi = get_pi(a, b, u_shape)
+
+        tau = 0.1
+        z = relaxed_bern(tau, pi, [tf.shape(pi)[0], tf.shape(pi)[1]])
+
+        # z = tf.tile(
+        #     z,
+        #     [tile_shape, 1])
+
+        if context.mode == ModularMode.M_STEP:
+            test_pi = pi
+            selection = tf.round(z)
+            final_selection = selection
+            # final_selection = tf.tile(
+            #                     selection,
+            #                     [tile_shape])
+            # final_selection = tf.reshape(
+            #                     final_selection,
+            #                     [tile_shape, shape])
+
+
+        elif context.mode == ModularMode.EVALUATION:
+            test_pi = get_test_pi(a, b)
+            selection = tf.where(test_pi>0.5,
+                                x=tf.ones_like(test_pi),
+                                y=tf.zeros_like(test_pi)
+                                )
+            final_selection = selection
+            # final_selection = tf.tile(
+            #     selection, [tf.shape(flat_inputs)[0]])
+            # final_selection = tf.reshape(
+            #     final_selection,[tf.shape(flat_inputs)[0], shape])
+
+        pseudo_ctrl = tfd.Bernoulli(probs=pi)
+        attrs = ModularLayerAttributes(selection, 
+                                        None, pseudo_ctrl, 
+                                        a, b, pi, None, None,
+                                        None, None, None)
+        context.layers.append(attrs)
+
+        if inputs.shape.ndims > 3:
+            new_biases = tf.einsum('mo,bm->bmo', modules.bias, z)
+            new_weights = tf.einsum('miocd,bm->bmiocd', modules.weight, z)
+        else:
+            new_weights = tf.einsum('mio,bm->bmio', modules.weight, tf.cast(z, tf.float32))
+            new_biases = tf.einsum('mo,bm->bmo', modules.bias, tf.cast(z, tf.float32))
+
+        return (run_masked_modules_withloop_and_concat(inputs, 
+                                    final_selection,
+                                    z,
+                                    shape,
+                                    modules.units,
+                                    modules.module_fnc, 
+                                    modules.output_shape,
+                                    new_weights,
+                                    new_biases), 
+                pi, selection, test_pi, test_pi)
+
 
 
 

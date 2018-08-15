@@ -123,7 +123,7 @@ def run():
                                                         module_count, 
                                                         units=units[i], 
                                                         activation=tf.nn.relu) 
-                hidden, l, s, bs, pi = modular.variational_mask(hidden, 
+                hidden, l, s, bs, pi = modular.beta_bernoulli(hidden, 
                                                                 modules, 
                                                                 context, 
                                                                 0.001,
@@ -148,7 +148,6 @@ def run():
         logits = tf.layers.dense(hidden, 10)
 
         target = modular.modularize_target(labels, context)
-        target = labels
         loglikelihood = tf.distributions.Categorical(logits).log_prob(target)
 
         loglikelihood = sum_and_mean_il(loglikelihood, context.sample_size)
@@ -194,9 +193,9 @@ def run():
             # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
 
             if REALRUN=='True':
-                writer = tf.summary.FileWriter(f'logs/train:_4layer_16modules_a:.1.6_b:0.1_alpha:0.1_beta:1_lr:0.05_modKL_doubl_{time}',
+                writer = tf.summary.FileWriter(f'logs/train:_4layer_16modules_a:.1.6_b:0.1_alpha:0.1_beta:1_lr:0.05_BETBERN_{time}',
                                                 sess.graph)
-                test_writer = tf.summary.FileWriter(f'logs/test:_4layer_16modules_a:1.6_b:0.1_alpha:0.1_beta:1_lr:0.05_modKL_doubl_{time}',
+                test_writer = tf.summary.FileWriter(f'logs/test:_4layer_16modules_a:1.6_b:0.1_alpha:0.1_beta:1_lr:0.05_BETBERN_{time}',
                                                     sess.graph)
             general_summaries = tf.summary.merge_all()
             m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
@@ -229,13 +228,14 @@ def run():
                 if REALRUN=='True':
                     writer.add_summary(summary_data, global_step=i)
 
-                # if i % 400 == 0:
-                #     test_feed_dict = {inputs: x_test, labels: y_test, data_indices: np.arange(x_test.shape[0])}
+                if i % 400 == 0:
+                    test_feed_dict = {inputs: x_test, labels: y_test, data_indices: np.arange(x_test.shape[0]),
+                                        iteration_number: j}
                                         
-                #     summary_data = sess.run(m_step_summaries, test_feed_dict)
+                    summary_data = sess.run(m_step_summaries, test_feed_dict)
 
-                #     if REALRUN=='True':
-                #         test_writer.add_summary(summary_data, global_step=i)
+                    if REALRUN=='True':
+                        test_writer.add_summary(summary_data, global_step=i)
                 if i % (dataset_size//batch_size) == 0:
                     j=0
                 else:

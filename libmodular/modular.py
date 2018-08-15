@@ -92,7 +92,7 @@ class ModularContext:
             return tf.distributions.kl_divergence(ctrl, regulariser)
         return tf.reduce_sum([get_layer_kl(i) for i in range(len(self.layers))])
 
-    def get_variational_kl(self, alpha):
+    def get_variational_kl(self, alpha, beta):
         def get_layer_KL(number):
             a = self.layers[number].a
             b = self.layers[number].b
@@ -100,7 +100,7 @@ class ModularContext:
             term_2 = tf.log( tf.divide(tf.multiply(a, b), alpha + 1e-20) + 1e-20)
             term_bracket = (tf.digamma(1.) - tf.digamma(b) - tf.divide(1., b + 1e-20))
             term_3 = tf.multiply(tf.divide(a - alpha, a + 1e-20), term_bracket)
-            return tf.reduce_sum(term_1 + term_2 + term_3)
+            return  (beta) * tf.reduce_sum(term_1 + term_2 + term_3)
         return tf.reduce_sum([get_layer_KL(i) for i in range(len(self.layers))])
 
     def get_kumaraswamy_logprob(self):
@@ -226,7 +226,9 @@ def run_masked_modules(inputs, selection, module_fnc, output_shape, ):
 
     return output
 
-def run_masked_modules_withloop(inputs, selection, mask, module_fnc, output_shape):
+def run_masked_modules_withloop(
+    inputs, selection, mask, module_count,
+    units, module_fnc, output_shape, weight, bias):
 
     batch_size = tf.shape(inputs)[0]
     if output_shape is not None:
@@ -243,15 +245,17 @@ def run_masked_modules_withloop(inputs, selection, mask, module_fnc, output_shap
 
     def compute_module(accum, used_module, i):
 
-        module = tf.slice(used_module, [i], [1])
-        inputs_considered = tf.slice(selection, 
-                                    [0, module[0]], 
-                                    [batch_size, 1])
-        re_mask = tf.reshape(tf.equal(1.,inputs_considered), [-1])
-        indices = tf.where(re_mask)
-        affected_inp = tf.boolean_mask(inputs, re_mask)
+        modules = tf.slice(selection, [0, i], [tf.shape(selection)[0], 1]) 
+        input_mask = tf.reshape(tf.equal(1., modules), [-1])
+        indices = tf.where(input_mask)
+        affected_inp = tf.boolean_mask(inputs, input_mask)
+        select_mask = tf.boolean_mask(mask, input_mask)
+        select_weight = tf.boolean_mask(weight, input_mask)
+        select_bias = tf.boolean_mask(bias, input_mask)
 
-        output = module_fnc(affected_inp, module[0], mask)
+
+        output = module_fnc(affected_inp, i, select_mask, 
+                            select_weight, select_bias)
 
         #Add the outputs, scatter_nd makes it the right shape with 0s for inputs not computed
         full_output =  accum + tf.scatter_nd(indices, 
@@ -336,13 +340,13 @@ def run_masked_modules_withloop_and_concat(
 
 def run_non_modular(
     inputs, selection, mask, module_count,
-    units, module_fnc, output_shape):
+    units, module_fnc, output_shape, weight, bias):
     batch_size = tf.shape(inputs)[0]
     if output_shape is not None:
         output_shape = [batch_size] + output_shape
     else:
         # This is the only way I am aware of to get the output shape easily
-        dummy = module_fnc(inputs, 0, mask)
+        dummy = module_fnc(inputs, 0, mask, weight, bias)
         output_shape = [batch_size] + dummy.shape[1:].as_list()
 
     #Used modules is just a list of modules that we are using
@@ -360,7 +364,7 @@ def run_non_modular(
         # input_mask = tf.reshape(tf.equal(1., modules), [-1])
         # indices = tf.where(input_mask)
         # affected_inp = tf.boolean_mask(inputs, input_mask)
-        output = module_fnc(inputs, i, mask)
+        output = module_fnc(inputs, i, mask, weight, bias)
 
         #Add the outputs, scatter_nd makes it the right shape 
         #with 0s for inputs not computed
@@ -443,8 +447,8 @@ def m_step(
 
         damp = get_damper(iteration, get_damp_list(num_batches))
 
-        KL = context.get_variational_kl(0.05)
-        mod_KL = (1/num_batches) * KL
+        KL = context.get_variational_kl(0.05, beta)
+        mod_KL = tf.reduce_sum((1/num_batches) * KL)
 
         joint_objective = - (loglikelihood - mod_KL)
 
@@ -463,12 +467,14 @@ def m_step(
                             value=KL)
 
     # with tf.control_dependencies([moving_average]):
-    opt = optimizer.minimize(joint_objective)
+    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+    with tf.control_dependencies(update_ops):
+        opt = optimizer.minimize(joint_objective)
 
     return opt
 
 def get_damper(iteration, damp_list):
-    return tf.slice(damp_list, [tf.cast(iteration,tf.int32)], [1])
+    return tf.slice(damp_list, [tf.cast(iteration, tf.int32)], [1])
 
 def get_damp_list(num_batches):
     iteration = tf.range(num_batches)
@@ -476,7 +482,7 @@ def get_damp_list(num_batches):
     term_2 = num_batches*tf.log(2.)
     damp = tf.exp(term_1 - term_2)
     damp = damp/tf.reduce_sum(damp)
-    return damp
+    return tf.reverse(damp, axis=[0])
 
 def evaluation(template, data_indices, dataset_size):
     context = ModularContext(ModularMode.EVALUATION, data_indices, dataset_size)
