@@ -156,7 +156,7 @@ def run():
             module_count = modules_list[i]
             modules = modular.create_dense_modules(
                 flattened, module_count,
-                units=16, activation=tf.nn.relu)
+                units=8, activation=tf.nn.relu)
             flattened, l, s, pi, bs = modular.variational_mask(
                 flattened, modules, context, 0.001,  tf.shape(inputs_tr)[0])
 
