@@ -16,7 +16,7 @@ E_step = sys.argv[2]
 masked_bernoulli = sys.argv[3]
 variational = sys.argv[4]
 beta_bern = sys.argv[5]
-beta = float(sys.argv[6])
+beta = 1
 
 def get_initialiser(data_size, n, module_count):
     choice = np.zeros((data_size, n), dtype=int)
@@ -65,14 +65,14 @@ def run():
 
     dataset_size = x_train.shape[0]
 
-    batch_size = 125
+    batch_size = 100
     num_batches = dataset_size/batch_size
 
     # Train dataset
     train = get_dataset(x_train, y_train, batch_size)
 
     # Test dataset
-    test_batch_size = 500
+    test_batch_size = 250
     test = get_dataset(x_test, y_test, test_batch_size)
 
     # Handle to switch between datasets
@@ -87,7 +87,7 @@ def run():
     labels_cast = tf.cast(labels, tf.int32)
 
     masked_bernoulli = False
-    sample_size = 3
+    sample_size = 2
 
     iteration_number = tf.placeholder(dtype=tf.float32,
                                 shape=[],
@@ -109,7 +109,7 @@ def run():
         #     filter_shape = [3, 3, input_channels, 8]
         #     activation = modular.conv_layer(activation, filter_shape, strides=[1,1,1,1])
 
-        modules_list = [32, 64, 128]
+        modules_list = [32, 64]
         for j in range(len(modules_list)):
             input_channels = activation.shape[-1]
             module_count = modules_list[j]
@@ -206,7 +206,6 @@ def run():
                                                   data_indices, sample_size=10, 
                                                   variational=variational)
     else:
-        num_batches = 2.
         m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
                                                   data_indices, variational, num_batches, 
                                                   beta, sample_size, iteration_number)
@@ -253,9 +252,9 @@ def run():
             # test_writer = tf.summary.FileWriter(
             #     f'logs/test:Variational_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1__nostopgrads__withetakhigamma{time}', sess.graph)
             test_writer = tf.summary.FileWriter(
-                f'logs/test:variational_mask:a:2.2_b:0.2_alpha:0.05_beta:'+str(beta)+f'_DEBUG_RUN14_maskshape:[batch*sample,modules]_batch_has_same_selection_sample_size:3_BATCHNORM_{time}', sess.graph)
+                f'logs/test:Cifar10_variational_mask:a:1.5_b:0.5_alpha:0.05_samples:2_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:variational_mask:a:2.2_b:0.2_alpha:0.05_beta:'+str(beta)+f'_DEBUG_RUN14_maskshape:[batch*sample,modules]_batch_has_same_selection_sample_size:3_BATCHNORM_{time}', sess.graph)
+                f'logs/train:Cifar10_variational_mask:a:1.5_b:0.5_alpha:0.05_samples:2_{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])

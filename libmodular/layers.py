@@ -250,36 +250,27 @@ def variational_mask(
         a = tf.get_variable(name='a', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform(
-                                [shape], minval=2.2, maxval=2.2)) + 1e-20
+                                [shape], minval=1.5, maxval=1.5)) + 1e-20
         b = tf.get_variable(name='b', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform(
-                                [shape], minval=0.2, maxval=0.2)) + 1e-20
-
-        # a = tf.check_numerics(a, 'NaN is at a')
-        # b = tf.check_numerics(b, 'NaN is at b')
+                                [shape], minval=0.5, maxval=0.5)) + 1e-20
 
         pi = get_pi(a, b, u_shape)
 
-        tau = 0.1
+        tau = 0.01
         z = relaxed_bern(tau, pi, pi.shape.as_list())
-
-
+        z = tf.expand_dims(z, 1)
         z = tf.tile(
-            z,
-            [tile_shape, 1])
+                z, [1, tile_shape, 1])
+        z = tf.reshape(
+                z, 
+                [tile_shape*context.sample_size, shape])
 
         if context.mode == ModularMode.M_STEP:
             test_pi = pi
             selection = tf.round(z)
             final_selection = selection
-            # final_selection = tf.tile(
-            #                     selection,
-            #                     [tile_shape])
-            # final_selection = tf.reshape(
-            #                     final_selection,
-            #                     [tile_shape, shape])
-
 
         elif context.mode == ModularMode.EVALUATION:
             test_pi = get_test_pi(a, b)
