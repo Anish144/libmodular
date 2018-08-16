@@ -90,14 +90,12 @@ class ModularContext:
             a = tf.check_numerics(self.layers[number].a, 'a') + 1e-20
             b = tf.check_numerics(self.layers[number].b, 'b') + 1e-20
             pi = tf.check_numerics(self.layers[number].probs, 'pi') + 1e-20
-            z = tf.cast(self.layers[number].selection, tf.float32)
-            n_a = z + a
-            n_b = b - a + tf.constant(1.)
+            n_a = a
+            n_b = b
             term_norm = tf.lgamma(n_a) + tf.lgamma(n_b) - tf.lgamma(n_a + n_b)
             term_1 = tf.multiply(n_a-1, tf.log(pi))
             term_2 = tf.multiply(n_b-1, tf.log(1-pi+1e-20))
             return tf.reduce_sum(tf.reduce_mean(term_1 + term_2 - term_norm, axis=0))
-            # return tf.check_numerics(tf.distributions.Beta(a,b).log_prob(pi), 'beta again')
         return tf.reduce_sum([_layer_logprob(i) for i in range(len(self.layers))])
 
 
@@ -109,7 +107,7 @@ class ModularContext:
             term_norm = tf.lgamma(a) + tf.lgamma(b) - tf.lgamma(a + b)
             term_1 = tf.multiply(a-1, tf.log(pi))
             term_2 = tf.multiply(b-1, tf.log(1-pi+1e-20))
-            return w * tf.reduce_mean(term_1 + term_2 - term_norm)
+            return tf.reduce_sum(w * tf.reduce_mean(term_1 + term_2 - term_norm, axis=0))
             # return tf.check_numerics(tf.distributions.Beta(a,b).log_prob(pi), 'beta again')
         return tf.reduce_sum([_layer_logprob(i) for i in range(len(self.layers))])
 
@@ -119,8 +117,8 @@ class ModularContext:
         def _layer_logprob(number):
             pi = tf.check_numerics(self.layers[number].probs, 'pi') + 1e-20
             z = tf.cast(self.layers[number].selection, tf.float32)
-            n_alpha = z + tf.constant(alpha)
-            n_beta = beta - z + tf.constant(1.)
+            n_alpha = tf.constant(alpha)
+            n_beta = beta
             term_norm = tf.lgamma(n_alpha) + tf.lgamma(n_beta) - tf.lgamma(n_alpha + n_beta)
             term_1 = tf.multiply(n_alpha-1, tf.log(pi+1e-20))
             term_2 = tf.multiply(n_beta-1, tf.log(1-pi+1e-20))
@@ -146,6 +144,19 @@ class ModularContext:
             return tf.reduce_sum(term_1 + term_2 + term_3)
         return tf.reduce_sum([get_layer_KL(i) for i in range(len(self.layers))])
 
+    def get_bern_prior(self):
+        p = tf.constant(0.3)
+        def get_layer_prior(number):
+            z = self.layers[number].selection
+            return tfd.Bernoulli(probs=p).log_prob(z)
+        return tf.reduce_sum([get_layer_prior(i) for i in range(len(self.layers))])
+    
+    def get_bern_logprob(self):
+        def get_layer(number):
+            ctrl = self.layers[number].controller
+            z = self.layers[number].selection
+            return tf.reduce_sum(ctrl.log_prob(z))
+        return tf.reduce_sum([get_layer(i) for i in range(len(self.layers))])
 
 def run_modules(inputs, selection, module_fnc, output_shape):
 
@@ -242,7 +253,9 @@ def run_masked_modules(inputs, selection, module_fnc, output_shape, ):
 
     return output
 
-def run_masked_modules_withloop(inputs, selection, mask, module_fnc, output_shape):
+def run_masked_modules_withloop(
+    inputs, selection, mask, module_count,
+    units, module_fnc, output_shape):
 
     batch_size = tf.shape(inputs)[0]
     if output_shape is not None:
@@ -286,13 +299,15 @@ def run_masked_modules_withloop(inputs, selection, mask, module_fnc, output_shap
 def run_masked_modules_withloop_and_concat(
     inputs, selection, mask, module_count,
     units, module_fnc, output_shape):
+
     batch_size = tf.shape(inputs)[0]
     if output_shape is not None:
         output_shape = [batch_size] + output_shape
     else:
         # This is the only way I am aware of to get the output shape easily
         dummy = module_fnc(inputs, 0, mask)
-        output_shape = dummy.shape[0:].as_list()
+        output_shape = [batch_size] + dummy.shape[1:].as_list()
+
 
     #Used modules is just a list of modules that we are using
     used_modules = get_unique_modules(selection)
@@ -313,7 +328,6 @@ def run_masked_modules_withloop_and_concat(
 
         #Add the outputs, scatter_nd makes it the right shape 
         #with 0s for inputs not computed
-
         scatter = tf.scatter_nd(indices, output, tf.cast(output_shape, tf.int64))
 
         accum_write = accum.write(i, scatter)
@@ -343,6 +357,70 @@ def run_masked_modules_withloop_and_concat(
 
     return full_output
 
+
+def run_non_modular(
+    inputs, selection, mask, module_count,
+    units, module_fnc, output_shape):
+
+    batch_size = tf.shape(inputs)[0]
+    if output_shape is not None:
+        output_shape = [batch_size] + output_shape
+    else:
+        # This is the only way I am aware of to get the output shape easily
+        dummy = module_fnc(inputs, 0, mask)
+        output_shape = [batch_size] + dummy.shape[1:].as_list()
+
+
+    #Used modules is just a list of modules that we are using
+    used_modules = get_unique_modules(selection)
+
+    condition = lambda accum, selection, i: tf.less(i, 
+                                                    module_count)
+
+    output_array = tf.TensorArray(dtype=tf.float32,
+                                size=module_count)
+
+    def compute_module(accum, selection, i):
+        modules = tf.slice(selection, [0, i], [tf.shape(selection)[0], 1]) 
+        # input_mask = tf.reshape(tf.equal(1, modules), [-1])
+        # indices = tf.where(input_mask)
+
+        # affected_inp = tf.boolean_mask(inputs, input_mask)
+        output = module_fnc(inputs, i, mask)
+
+        #Add the outputs, scatter_nd makes it the right shape 
+        #with 0s for inputs not computed
+
+        # scatter = tf.scatter_nd(indices, output, tf.cast(output_shape, tf.int64))
+
+        accum_write = accum.write(i, output)
+
+        i = tf.add(i, 1)
+        return accum_write, selection, i
+
+    i = tf.constant(0, tf.int32)
+    output = tf.while_loop(
+        condition, compute_module, [output_array, selection, i])[0]
+
+    full_output = output.stack()
+
+    if full_output.shape.ndims>3:
+        full_output = tf.transpose(full_output, [1,2,3,0,4])
+        full_output = tf.reshape(full_output,
+                                [tf.shape(full_output)[0],
+                                dummy.shape[1].value,
+                                dummy.shape[2].value,
+                                units * module_count])
+    else:
+        full_output = tf.transpose(full_output, [1,0,2])
+        full_output = tf.reshape(full_output,
+                        [tf.shape(full_output)[0],
+                        units * module_count])
+
+
+    return full_output
+
+
 def e_step(template, dataset_size, data_indices, opt):
     context = ModularContext(ModularMode.E_STEP, data_indices, dataset_size)
 
@@ -365,17 +443,17 @@ def e_step(template, dataset_size, data_indices, opt):
 
 def m_step(
     template, optimizer, dataset_size, 
-    data_indices, reinforce, num_batches, sample_size):
+    data_indices, num_batches, sample_size):
     context = ModularContext(ModularMode.M_STEP, data_indices, dataset_size, sample_size)
 
     print('REINFORCE')
     loglikelihood = template(context)[0]
     
-    module_objective =  tf.reduce_sum(loglikelihood) +  context.get_prior_beta(0.05)
+    module_objective =  loglikelihood + context.get_prior_beta(0.05)
 
     q_log = context.get_beta_logprob()
 
-    path_term = tf.stop_gradient(module_objective - q_log)
+    path_term = tf.stop_gradient(module_objective - q_log) - context.control_variate(10)
 
     E_joint_objective = tf.multiply(q_log, path_term)
 
@@ -388,8 +466,9 @@ def m_step(
     tf.summary.scalar('module_objective', module_objective, collections=[M_STEP_SUMMARIES])
     tf.summary.scalar('ELBO', -total_objective, collections=[M_STEP_SUMMARIES])
 
-    # with tf.control_dependencies([moving_average]):
-    opt = optimizer.minimize(-total_objective)
+    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+    with tf.control_dependencies(update_ops):
+        opt = optimizer.minimize(-total_objective)
 
     return opt
 

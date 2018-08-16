@@ -53,8 +53,8 @@ def create_summary(list_of_ops_or_op, name, summary_type):
     else:
         raise TypeError('Invalid type for summary')
 
-def sum_and_mean_il(il, sample_size):
-    il = tf.reshape(il, [-1,
+def sum_and_mean_il(il, tile_shape, sample_size):
+    il = tf.reshape(il, [tile_shape,
                         sample_size])
     il = tf.reduce_sum(il, axis=0)
     return tf.reduce_mean(il, axis=0)
@@ -77,7 +77,7 @@ def run():
     labels = tf.placeholder(tf.int32, [None], 'labels')
     data_indices = tf.placeholder(tf.int32, [None], 'data_indices') #Labels the batch...
 
-    sample_size = 2
+    sample_size = 20
     module_count = 32
     reinforce = 'True'
     masked_bernoulli = False
@@ -92,7 +92,7 @@ def run():
             Instantiation of the ModularContext class
         """
         hidden = inputs
-        units = [16, 8, 4, 2]
+        units = [8]
         layers = len(units)
         s_log = []
         ctrl_logits =[]
@@ -104,6 +104,7 @@ def run():
             if masked_bernoulli:
 
                 modules = modular.create_dense_modules(hidden, 
+                                                        context,
                                                         module_count, 
                                                         units=units[i],
                                                         activation=tf.nn.relu) 
@@ -111,6 +112,7 @@ def run():
                                                         modules,
                                                         context,
                                                         get_initialiser(dataset_size, 2, module_count))
+                hidden  = modular.batch_norm(hidden)
 
             elif reinforce == 'True':
 
@@ -124,6 +126,7 @@ def run():
                                                                 context, 
                                                                 0.001,
                                                                 tf.shape(inputs)[0])
+                hidden  = modular.batch_norm(hidden)
                 pi_log.append(pi)
                 s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
 
@@ -146,7 +149,7 @@ def run():
         target = modular.modularize_target(labels, context)
         loglikelihood = tf.distributions.Categorical(logits).log_prob(target)
 
-        loglikelihood = sum_and_mean_il(loglikelihood, sample_size)
+        loglikelihood = sum_and_mean_il(loglikelihood, tf.shape(inputs)[0], context.sample_size)
 
         predicted = tf.argmax(logits, axis=-1, output_type=tf.int32)
         accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, target), tf.float32))
@@ -159,13 +162,13 @@ def run():
                                 reinforce=reinforce)
     optimizer = tf.train.AdamOptimizer(learning_rate=0.0001)
 
-    if reinforce == 'True':
+    if reinforce or masked_bernoulli == 'True':
         m_step, eval = modular.modularize_reinforce(template, optimizer, dataset_size,
-                                                  data_indices, reinforce, num_batches,
+                                                  data_indices, num_batches,
                                                   sample_size)
     else:
         e_step, m_step, eval = modular.modularize(template, optimizer, dataset_size,
-                                                  data_indices, sample_size=10, reinforce=reinforce)
+                                                  data_indices, num_batches, sample_size=10, reinforce=reinforce)
     ll, ctrl_logits, accuracy,  bs_perst_log, s_log, pi_log, context = eval
 
     params = context.layers
@@ -189,16 +192,16 @@ def run():
             # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
 
             if REALRUN=='True':
-                writer = tf.summary.FileWriter(f'logs/train:_4layer_16modules_a:2.0_b:0.3_alpha:0.05_REINFORCE_TRY_10samples__NEWA_LR:0.0001_NOVARIATES_{time}',
+                writer = tf.summary.FileWriter(f'logs/train:_4layer_16modules_a:1.5_b:3.5_alpha:0.05_REINFORCE_TRY_20samples__NEWA_LR:0.0001_VARIATIONALREINFORCE_fixedthetiling_CONTROLVARIATE_{time}',
                                                 sess.graph)
-                test_writer = tf.summary.FileWriter(f'logs/test:_4layer_16modules_a:2.0_b:0.3_alpha:0.05_REINFORCE_TRY_10samples__NEWA_LR:0.0001_NOVARIATES_{time}',
+                test_writer = tf.summary.FileWriter(f'logs/test:_4layer_16modules_a:1.5_b:3.5_alpha:0.05_REINFORCE_TRY_20samples__NEWA_LR:0.0001_VARIATIONALREINFORCE_fixedthetiling_CONTROLVARIATE_{time}',
                                                     sess.graph)
             general_summaries = tf.summary.merge_all()
             m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
             sess.run(tf.global_variables_initializer())
 
             # Initial e-step
-            if reinforce == 'False':
+            if reinforce and masked_bernoulli ==  'False':
                 feed_dict = {
                         inputs: x_train,
                         labels: y_train,

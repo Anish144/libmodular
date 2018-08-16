@@ -48,6 +48,11 @@ def create_summary(list_of_ops_or_op, name, summary_type):
     else:
         raise TypeError('Invalid type for summary')
 
+def sum_and_mean_il(il, tile_shape, sample_size):
+    il = tf.reshape(il, [tile_shape,
+                        sample_size])
+    il = tf.reduce_sum(il, axis=0)
+    return tf.reduce_mean(il, axis=0)
 
 # noinspection PyProtectedMember
 def run():
@@ -79,6 +84,7 @@ def run():
     labels_cast = tf.cast(labels, tf.int32)
 
     masked_bernoulli = False
+    sample_size = 20
 
     def network(context: modular.ModularContext, 
                 masked_bernoulli=False, 
@@ -97,7 +103,7 @@ def run():
         #     activation = modular.conv_layer(activation, filter_shape, strides=[1,1,1,1])
 
         modules_list = [8, 16]
-        for j in range(2):
+        for j in range(len(modules_list)):
             input_channels = activation.shape[-1]
             module_count = modules_list[j]
             filter_shape = [3, 3, input_channels, 1]
@@ -114,8 +120,8 @@ def run():
             elif reinforce == 'True':
                 print('reinforce')
                 hidden, l, s, pi, bs = modular.reinforce_mask(
-                    activation, modules, context, 0.001)
-                # hidden = modular.batch_norm(hidden)
+                    activation, modules, context, 0.001, tf.shape(inputs)[0])
+                hidden = modular.batch_norm(hidden)
 
             else:
                 print('Vanilla')
@@ -134,13 +140,13 @@ def run():
         flattened = tf.layers.flatten(activation)
 
         modules_list = [8, 4]
-        for i in range(2):
+        for i in range(len(modules_list)):
             module_count = modules_list[i]
             modules = modular.create_dense_modules(
-                flattened, module_count,
+                flattened, context, module_count,
                 units=8, activation=tf.nn.relu)
             flattened, l, s, pi, bs = modular.reinforce_mask(
-                flattened, modules, context, 0.001)
+                flattened, modules, context, 0.001, tf.shape(inputs)[0])
 
             ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
             s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
@@ -151,6 +157,8 @@ def run():
 
         target = modular.modularize_target(labels_cast, context)
         loglikelihood = tf.distributions.Categorical(logits).log_prob(target)
+
+        loglikelihood = sum_and_mean_il(loglikelihood, tf.shape(inputs)[0], context.sample_size)
 
         predicted = tf.argmax(logits, axis=-1, output_type=tf.int32)
         accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, target), tf.float32))
@@ -187,7 +195,8 @@ def run():
                                                   reinforce=reinforce)
     else:
         m_step, eval = modular.modularize_reinforce(template, optimizer, dataset_size,
-                                                  data_indices, reinforce, num_batches)
+                                                  data_indices, num_batches,
+                                                  sample_size)
 
     #Summaries
     params = context.layers
@@ -232,9 +241,9 @@ def run():
             # test_writer = tf.summary.FileWriter(
             #     f'logs/test:reinforce_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1__nostopgrads__withetakhigamma{time}', sess.graph)
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_reinforce_4layer_a:3.3_b:0.6_alpha:0.05_8modules_modKL_{time}', sess.graph)
+                f'logs/test:Cifar10_REINFORCE_4layer_a:1.5_b:0.5_alpha:0.05_w:10_samples:20_CONTROLVARIATE_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_reinforce_4layer_a:3.3_b:0.6_alpha:0.05_8modules_modKL_{time}', sess.graph)
+                f'logs/train:Cifar10_REINFORCE_4layer_a:1.5_b:0.5_alpha:0.05_w:10_samples:20_CONTROLVARIATE_{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
@@ -242,14 +251,14 @@ def run():
         train_dict = {handle: make_handle(sess, train)}
         test_dict = {handle: make_handle(sess, test)}
 
-        if E_step == 'True' and reinforce == 'False':
-            print('EEEEE')
-            for i in tqdm(range(200)):
-                _ = sess.run(e_step, train_dict)
+        # if E_step == 'True' and reinforce == 'False':
+        #     print('EEEEE')
+        #     for i in tqdm(range(200)):
+        #         _ = sess.run(e_step, train_dict)
 
         for i in tqdm(range(400000)):
             # Switch between E-step and M-step
-            step = e_step if i % 1 == 0 else m_step
+            step = m_step
 
             # Sometimes generate summaries
             if i % 400 == 0: 
