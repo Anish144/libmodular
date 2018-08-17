@@ -143,10 +143,12 @@ def run():
         for i in range(len(modules_list)):
             module_count = modules_list[i]
             modules = modular.create_dense_modules(
-                flattened, context, module_count,
-                units=8, activation=tf.nn.relu)
+                        flattened, context, module_count,
+                        units=8, activation=tf.nn.relu)
             flattened, l, s, pi, bs = modular.reinforce_mask(
-                flattened, modules, context, 0.001, tf.shape(inputs)[0])
+                                        flattened, modules, context, 
+                                        0.001, tf.shape(inputs)[0])
+            flattened = modular.batch_norm(flattened)
 
             ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
             s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
@@ -241,9 +243,9 @@ def run():
             # test_writer = tf.summary.FileWriter(
             #     f'logs/test:reinforce_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1__nostopgrads__withetakhigamma{time}', sess.graph)
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_REINFORCE_4layer_a:1.5_b:0.5_alpha:0.05_w:10_samples:20_CONTROLVARIATE_{time}', sess.graph)
+                f'logs/test:Cifar10_REINFORCE_4layer_a:1.5_b:0.5_alpha:0.05_w:10_samples:20_CONTROLVARIATE_with_linear_batchnorm_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_REINFORCE_4layer_a:1.5_b:0.5_alpha:0.05_w:10_samples:20_CONTROLVARIATE_{time}', sess.graph)
+                f'logs/train:Cifar10_REINFORCE_4layer_a:1.5_b:0.5_alpha:0.05_w:10_samples:20_CONTROLVARIATE_with_linear_batchnorm_{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
