@@ -254,7 +254,7 @@ def variational_mask(
         b = tf.get_variable(name='b', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform(
-                                [shape], minval=0.5, maxval=0.5)) + 1e-20
+                                [shape], minval=0.2, maxval=0.2)) + 1e-20
 
         pi = get_pi(a, b, u_shape)
 
@@ -318,6 +318,125 @@ def variational_mask(
         #                 pi, selection, test_pi, test_pi)
 
 
+def dep_variational_mask(
+    inputs, modules: ModulePool, 
+    context: ModularContext, eps, tile_shape):
+    """
+    Constructs a Bernoulli masked layer that outputs sparse 
+    binary masks dependent on the input
+    Based on the Adaptive network Sparsification paper
+    Args:
+        inputs; Batch X dimension
+        modules; ModulePool named tuple
+        context; context class
+        eps; threshold for dependent pi
+    """
+    with tf.variable_scope(None, 'dep_variational_mask'):
+
+        inputs = context.begin_modular(inputs)
+        flat_inputs = tf.stop_gradient(tf.layers.flatten(inputs))
+        input_shape = flat_inputs.shape[-1].value
+
+        shape = modules.module_count
+        input_shape = flat_inputs.shape[-1].value
+        u_shape = [context.sample_size, shape]
+
+        a = tf.maximum(tf.get_variable(name='a', 
+                            dtype=tf.float32, 
+                            initializer=tf.random_uniform(
+                                [shape], minval=10.5, maxval=10.5)), 1e-20)
+        b = tf.maximum(tf.get_variable(name='b', 
+                            dtype=tf.float32, 
+                            initializer=tf.random_uniform(
+                                [shape], minval=0.3, maxval=0.3)), 1e-20)
+
+        pi = get_pi(a, b, u_shape)
+
+        # a = a, 'a here')
+        # b = b, 'b here')
+
+        # pi = tf.expand_dims(pi, 1)
+        # pi = tf.tile(
+        #         pi, [1, tile_shape, 1])
+        # pi = tf.reshape(
+        #         pi, 
+        #         [tile_shape*context.sample_size, shape])
+
+        initializer = tf.truncated_normal_initializer(mean=20.1, stddev=1)
+        def dependent_pi(inputs, pi):
+            with tf.variable_scope('dep_pi', reuse=tf.AUTO_REUSE):
+                dep_input = tf.maximum(tf.layers.dense(inputs,
+                                            shape,
+                                            activation=tf.nn.relu,
+                                            kernel_initializer=initializer),1.)
+                return tf.multiply(dep_input, pi), dep_input
+
+        dep_pi = tf.make_template('dependent_pi', dependent_pi)
+
+        new_pi, dep_input = dep_pi(flat_inputs, pi)
+        tau = 0.01
+        z = relaxed_bern(tau, new_pi, [shape])
+        # z = tf.expand_dims(z, 1)
+        # z = tf.tile(
+        #         z, [1, tile_shape, 1])
+        # z = tf.reshape(
+        #         z, 
+        #         [tile_shape*context.sample_size, shape])
+
+        if context.mode == ModularMode.M_STEP:
+            test_pi = new_pi
+            selection = tf.round(z)
+            final_selection = selection
+
+        elif context.mode == ModularMode.EVALUATION:
+            test_pi = get_test_pi(a, b)
+            new_pi, dep_input = dep_pi(flat_inputs, test_pi)
+            selection = tf.where(new_pi>0.5,
+                                x=tf.ones_like(new_pi),
+                                y=tf.zeros_like(new_pi)
+                                )
+            final_selection = selection
+
+            # final_selection = tf.tile(
+            #     selection, [tf.shape(flat_inputs)[0]])
+            # final_selection = tf.reshape(
+                # final_selection,[tf.shape(flat_inputs)[0], shape])
+
+        pseudo_ctrl = tfd.Bernoulli(probs=pi)
+        attrs = ModularLayerAttributes(selection, 
+                                        None, pseudo_ctrl, 
+                                        a, b, pi, None, None,
+                                        None, None, None)
+        context.layers.append(attrs)
+
+        if inputs.shape.ndims > 3:
+            new_biases = tf.einsum('mo,bm->bmo', modules.bias, z)
+            new_weights = tf.einsum('miocd,bm->bmiocd', modules.weight, z)
+        else:
+            new_weights = tf.einsum('mio,bm->bmio', modules.weight, tf.cast(z, tf.float32))
+            new_biases = tf.einsum('mo,bm->bmo', modules.bias, tf.cast(z, tf.float32))
+
+        return (run_masked_modules_withloop_and_concat(inputs, 
+                                    final_selection,
+                                    z,
+                                    shape,
+                                    modules.units,
+                                    modules.module_fnc, 
+                                    modules.output_shape,
+                                    new_weights,
+                                    new_biases), 
+                new_pi, selection, test_pi, test_pi)
+
+        # return (run_non_modular(inputs,
+        #                     final_selection,
+        #                     z,
+        #                     shape,
+        #                     modules.units,
+        #                     modules.module_fnc, 
+        #                     modules.output_shape), 
+        #                 pi, selection, test_pi, test_pi)
+
+
 def beta_bernoulli(
     inputs, modules: ModulePool, 
     context: ModularContext, eps, tile_shape):
@@ -331,16 +450,20 @@ def beta_bernoulli(
         shape = modules.module_count
         input_shape = flat_inputs.shape[-1].value
 
-        std = tf.pow(tf.divide(2., input_shape + modules.module_count), 0.5)
-        initializer_a = tf.truncated_normal_initializer(mean=0., stddev=std)
-        initializer_b = tf.truncated_normal_initializer(mean=0., stddev=std)
+        std = 0.001
+        initializer_a = tf.truncated_normal_initializer(mean=20.1, stddev=std)
+        initializer_b = tf.truncated_normal_initializer(mean=10.1, stddev=std)
 
-        a = tf.layers.dense(
+        a = tf.log(tf.maximum(tf.layers.dense(
                 flat_inputs, modules.module_count,
-                activation=tf.nn.relu, kernel_initializer=initializer_a)
-        b = tf.layers.dense(
+                activation=tf.nn.relu, kernel_initializer=initializer_a, name='var_a'), 1e-10))
+        b = tf.log(tf.maximum(tf.layers.dense(
                 flat_inputs, modules.module_count,
-                activation=tf.nn.relu, kernel_initializer=initializer_b)
+                activation=tf.nn.relu, kernel_initializer=initializer_b, name='var_b'),1e-10))
+
+        # a = tf.check_numerics(a, 'a variable')
+        # b = tf.check_numerics(b, 'b variable')
+
 
         u_shape = [tf.shape(a)[0], tf.shape(a)[1]]
 
@@ -421,37 +544,37 @@ def get_test_pi(a, b):
 
 def get_pi(a, b, u_shape):
     with tf.variable_scope('train_pi'):
-        u = tf.add(get_u(u_shape), 1e-20, name='max_u')
-        max_b = tf.add(b, 1e-20, name='max_b')
-        max_a = tf.add(a, 1e-20, name='max_a')
-        term_a = tf.realdiv(1., max_a, name='div_a')
-        term_b = tf.realdiv(1., max_b, name='div_b')
+        u = tf.maximum(get_u(u_shape), 1e-20, name='max_u')
+        max_b = tf.maximum(b, 1e-10, name='max_b')
+        max_a = tf.maximum(a, 1e-10, name='max_a')
+        term_a = tf.pow(max_a,-1.,  name='div_a')
+        term_b = tf.pow(max_b,-1., name='div_b')
         log_pow_1 = tf.multiply(tf.log(u, name='log_u'), 
                                 term_b, name='log_pow_1')
         pow_1 = tf.exp(log_pow_1, name='term_1')
-        pow_1_stable = tf.add(pow_1, 1e-20, name='stable_pow1')
-        log_pow_2 = tf.multiply(tf.log(1-pow_1, name='log_1pow_1'), 
+        pow_1_stable = tf.maximum(1-pow_1, 1e-20, name='stable_pow1')
+        log_pow_2 = tf.multiply(tf.log(pow_1_stable, name='log_1pow_1'), 
                                 term_a, name='log_pow_2')
         pow_2 = tf.exp(log_pow_2, name='pow_2')
         return tf.add(pow_2, 1e-20, name='max_pi')
 
 def relaxed_bern(tau, probs, u_shape):
     with tf.variable_scope('relaxed_bernoulli'):
-        u = tf.add(get_u(u_shape), 1e-20, name='max_u')
+        u = tf.maximum(get_u(u_shape), 1e-20, name='max_u')
 
         term_1pi = tf.subtract(1., probs, name='1minus_pi')
-        term_1pi_add = tf.add(term_1pi, 1e-20, name='1minus_pi_add')
+        term_1pi_add = tf.maximum(term_1pi, 1e-20, name='1minus_pi_add')
         term_1pi = tf.log(term_1pi_add, name='log_1pi')
-        term_pi_add = tf.add(probs, 1e-20, name='pi_add')
+        term_pi_add = tf.maximum(probs, 1e-20, name='pi_add')
         term_1_pi = tf.log(term_pi_add, name='log_pi')
         term_1 = tf.subtract(term_1_pi, term_1pi, name='term_1')
 
         term_2u = tf.subtract(1., u, name='sub_1u')
-        term_2u_max = tf.add(term_2u, 1e-20, name='max_pow2u')
+        term_2u_max = tf.maximum(term_2u, 1e-20, name='max_pow2u')
         term_1u_log = tf.log(term_2u_max, name='term_1u_log')
         term_ulog = tf.log(u, name='u_log')
         term_2 = tf.subtract(term_ulog, term_1u_log, name='term_2_u')
-        term_2_max = tf.add(term_2, 1e-20, name='max_term_2')
+        term_2_max = tf.maximum(term_2, 1e-20, name='max_term_2')
 
         tau_divide = tf.divide(1., tau, name='divide_tau')
 

@@ -11,12 +11,13 @@ import numpy as np
 from libmodular.modular import create_m_step_summaries, M_STEP_SUMMARIES
 import sys
 
+batch=200
 
 inputs = tf.placeholder(name='x',
-                  shape=[None,2],
+                  shape=[batch*2,8],
                   dtype=tf.float32)
 labels = tf.placeholder(name='y',
-                  shape=[None],
+                  shape=[batch*2],
                   dtype=tf.int32)
 
 def create_summary(list_of_ops_or_op, name, summary_type):
@@ -50,7 +51,7 @@ def network(context: modular.ModularContext):
     ctrl_logits =[]
     pi_log = []
     bs_perst_log = []
-    module_count = 5
+    module_count = 10
 
     for i in range(layers):
 
@@ -58,7 +59,7 @@ def network(context: modular.ModularContext):
                                               module_count, 
                                               units=units[i], 
                                               activation=tf.nn.relu) 
-      hidden, l, s, bs, pi = modular.variational_mask(hidden, 
+      hidden, l, s, bs, pi = modular.beta_bernoulli(hidden, 
                                                       modules, 
                                                       context, 
                                                       0.001,
@@ -70,6 +71,7 @@ def network(context: modular.ModularContext):
     bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
 
     logits = tf.layers.dense(hidden, 2)
+    # logits = hidden
 
     target = modular.modularize_target(labels, context)
     loglikelihood = tf.distributions.Categorical(logits).log_prob(target)
@@ -84,15 +86,15 @@ def network(context: modular.ModularContext):
 
 template = tf.make_template('network', 
                             network)
-optimizer = tf.train.AdamOptimizer(learning_rate=0.0005)
+optimizer = tf.train.AdamOptimizer(learning_rate=0.05)
 
-iteration_number=2.
-num_batches=1.
+iteration_number=tf.placeholder(dtype=tf.float32, shape=[])
+num_batches=2000.
 beta=1
 dataset_size=200
 data_indices = 1
 variational = 'True'
-sample_size = 10
+sample_size = 1
 m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
                                           data_indices, variational, num_batches, beta,
                                           sample_size, iteration_number)
@@ -115,26 +117,34 @@ create_summary(tf.reduce_sum(ll), 'loglikelihood', 'scalar')
 create_summary(accuracy, 'accuracy', 'scalar')
 
 with tf.Session() as sess:
+    # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
     time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
     step = m_step
     init = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
     general_summaries = tf.summary.merge_all()
-    writer = tf.summary.FileWriter(f'toy/TOY_SET_2to5_{time}')
-    batch=200
-    data_1 = np.random.normal(loc=2.0, scale=1.0, size=(batch, 2))
-    data_2 = np.random.normal(loc=5.0, scale=1.0, size=(batch,2))
+    writer = tf.summary.FileWriter(f'toy/TOY_SET_TRUE_{time}')
+    data_1 = np.random.normal(loc=2.0, scale=1.0, size=(batch, 8))
+    data_2 = np.random.normal(loc=10.0, scale=1.0, size=(batch, 8))
     full_data = np.concatenate([data_1, data_2], axis=0)
     label_1 = np.zeros(batch, dtype=int)
     label_2 = np.ones(batch, dtype=int) 
     full_label = np.concatenate([label_1, label_2], axis=0)
     sess.run(init)
+
     feed_dict = {inputs:full_data,
                 labels:full_label}
-    
-    for i in range(50000):
+
+    js=0.    
+    for i in tqdm(range(50000)):
+        feed_dict[iteration_number] = js
         sess.run(step, feed_dict)
         summary = sess.run(general_summaries, feed_dict)
         writer.add_summary(summary, global_step=i)
+        if i<num_batches-1:
+          js+=1.
+        else:
+          js=num_batches-1.
+
 
 writer.close()
 

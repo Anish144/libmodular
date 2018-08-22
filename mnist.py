@@ -68,7 +68,7 @@ def run():
 
     dataset_size = x_train.shape[0] #Size of the entire training set
 
-    batch_size = 125
+    batch_size = 32
     num_batches = dataset_size/batch_size
 
     #Placeholders
@@ -76,7 +76,7 @@ def run():
     labels = tf.placeholder(tf.int32, [None], 'labels')
     data_indices = tf.placeholder(tf.int32, [None], 'data_indices') #Labels the batch...
 
-    module_count = 32
+    module_count = 16
     variational = 'True'
     masked_bernoulli = False
     new_controller = False
@@ -98,7 +98,7 @@ def run():
             Instantiation of the ModularContext class
         """
         hidden = inputs
-        units = [16]
+        units = [4, 2]
         layers = len(units)
         s_log = []
         ctrl_logits =[]
@@ -228,14 +228,14 @@ def run():
                 if REALRUN=='True':
                     writer.add_summary(summary_data, global_step=i)
 
-                if i % 400 == 0:
-                    test_feed_dict = {inputs: x_test, labels: y_test, data_indices: np.arange(x_test.shape[0]),
-                                        iteration_number: j}
+                # if i % 400 == 0:
+                #     test_feed_dict = {inputs: x_test, labels: y_test, data_indices: np.arange(x_test.shape[0]),
+                #                         iteration_number: j}
                                         
-                    summary_data = sess.run(m_step_summaries, test_feed_dict)
+                #     summary_data = sess.run(m_step_summaries, test_feed_dict)
 
-                    if REALRUN=='True':
-                        test_writer.add_summary(summary_data, global_step=i)
+                #     if REALRUN=='True':
+                #         test_writer.add_summary(summary_data, global_step=i)
                 if i % (dataset_size//batch_size) == 0:
                     j=0
                 else:

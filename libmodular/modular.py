@@ -447,7 +447,7 @@ def m_step(
 
         damp = get_damper(iteration, get_damp_list(num_batches))
 
-        KL = context.get_variational_kl(0.05, beta)
+        KL = context.get_variational_kl(0.1, beta)
         mod_KL = tf.reduce_sum((1/num_batches) * KL)
 
         joint_objective = - (loglikelihood - mod_KL)
@@ -478,10 +478,10 @@ def get_damper(iteration, damp_list):
 
 def get_damp_list(num_batches):
     iteration = tf.range(num_batches)
-    term_1 = (num_batches-iteration)*tf.log(2.)
-    term_2 = num_batches*tf.log(2.)
-    damp = tf.exp(term_1 - term_2)
-    damp = damp/tf.reduce_sum(damp)
+    term_1 = (num_batches-iteration)
+    # term_2 = num_batches*tf.log(2.)
+    # damp = tf.exp(term_1 - term_2)
+    damp = term_1/tf.reduce_sum(term_1)
     return tf.reverse(damp, axis=[0])
 
 def evaluation(template, data_indices, dataset_size):
