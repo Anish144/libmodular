@@ -7,7 +7,10 @@ import tensorflow as tf
 
 M_STEP_SUMMARIES = 'M_STEP_SUMMARIES'
 ModularMode = Enum('ModularMode', 'E_STEP M_STEP EVALUATION')
-ModularLayerAttributes = namedtuple('ModularLayerAttributes', ['selection', 'best_selection', 'controller'])
+ModularLayerAttributes = namedtuple(
+                            'ModularLayerAttributes', 
+                            ['selection', 'best_selection', 
+                            'controller', 'probs'])
 ModulePool = namedtuple('ModulePool', ['module_count', 'module_fnc', 'output_shape'])
 
 
@@ -38,7 +41,13 @@ class ModularContext:
         return tf.reduce_mean([layer_entropy(layer) for layer in self.layers])
 
     def selection_logprob(self):
-        x = [tf.reduce_sum(attrs.controller.log_prob(attrs.selection), axis=-1) for attrs in self.layers]
+        def layer_logprob(layer):
+            probs = self.layers[layer].probs
+            selection = tf.cast(self.layers[layer].selection, tf.float32)
+            term_1 = selection * tf.log(tf.maximum(probs, 1e-20))
+            term_2 = (1-selection) * tf.log(tf.maximum(1-probs, 1e-20))
+            return term_1 + term_2
+        x = [tf.reduce_sum(layer_logprob(attrs), axis=-1) for attrs in range(len(self.layers))]
         return tf.reduce_sum(x, axis=0)
 
     def update_best_selection(self, best_selection_indices):
@@ -126,6 +135,48 @@ def run_masked_modules(inputs, selection, module_fnc, output_shape):
     return output
 
 
+def run_masked_modules_withloop(inputs, selection, module_fnc, output_shape):
+
+    batch_size = tf.shape(inputs)[0]
+    if output_shape is not None:
+        output_shape = [batch_size] + output_shape
+    else:
+        # This is the only way I am aware of to get the output shape easily
+        dummy = module_fnc(inputs, 0)
+        output_shape = [batch_size] + dummy.shape[1:].as_list()
+
+    #Used modules is just a list of modules that we are using
+    used_modules = get_unique_modules(selection)
+
+    condition = lambda accum, used_module, i: tf.less(i, tf.shape(used_modules)[0])
+
+    def compute_module(accum, used_module, i):
+
+        module = tf.slice(used_module, [i], [1])
+        inputs_considered = tf.slice(selection, 
+                                    [0, module[0]], 
+                                    [batch_size, 1])
+        re_mask = tf.reshape(tf.equal(1,inputs_considered), [-1])
+        indices = tf.where(re_mask)
+        affected_inp = tf.boolean_mask(inputs, re_mask)
+
+        output = module_fnc(affected_inp, module[0])
+
+        #Add the outputs, scatter_nd makes it the right shape with 0s for inputs not computed
+        full_output =  accum + tf.scatter_nd(indices, 
+                                            output, 
+                                            tf.cast(output_shape, tf.int64)) 
+
+        i = tf.add(i, 1)
+        return full_output, used_modules, i
+
+    i = tf.constant(0, tf.int32)
+    output = tf.while_loop(
+        condition, compute_module, [tf.zeros(output_shape), used_modules, i])[0]
+
+    return output
+
+
 def e_step(template, sample_size, dataset_size, data_indices):
     context = ModularContext(ModularMode.E_STEP, data_indices, dataset_size, sample_size)
 
@@ -150,7 +201,7 @@ def m_step(template, optimizer, dataset_size, data_indices):
 
     ctrl_objective = -tf.reduce_mean(selection_logprob)
     module_objective = -tf.reduce_mean(loglikelihood)
-    joint_objective = ctrl_objective + module_objective + context.get_kl()
+    joint_objective = ctrl_objective + module_objective
 
     tf.summary.scalar('ctrl_objective', ctrl_objective, collections=[M_STEP_SUMMARIES])
     tf.summary.scalar('module_objective', module_objective, collections=[M_STEP_SUMMARIES])

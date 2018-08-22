@@ -3,7 +3,7 @@ from tensorflow.contrib import distributions as tfd
 import numpy as np
 
 from libmodular.modular import ModulePool, ModularContext, ModularMode, ModularLayerAttributes
-from libmodular.modular import run_modules, run_masked_modules, e_step, m_step, evaluation
+from libmodular.modular import run_modules, run_masked_modules, e_step, m_step, evaluation, run_masked_modules_withloop
 
 
 def create_dense_modules(inputs_or_shape, module_count: int, units: int = None, activation=None):
@@ -107,39 +107,37 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext, initializ
         flat_inputs = tf.layers.flatten(inputs)
 
         logits = tf.layers.dense(flat_inputs, modules.module_count)
-        # probs = tf.sigmoid(logits)
-        # greater = tf.greater(probs, 0.5)
-        # gate = tf.cast(greater, tf.int32)
-
+        logits = tf.maximum(tf.contrib.sparsemax.sparsemax(logits), 1e-20)
 
         ctrl_bern = tfd.Bernoulli(logits) #Create controller with logits
 
-        #Initialisation of variables to 1
-        # shape = [context.dataset_size, modules.module_count]
-        # initializer = tf.random_uniform_initializer(maxval=1, dtype=tf.int32)
-        
         shape = [context.dataset_size, modules.module_count]
-        # initializer = tf.constant_initializer()
         best_selection_persistent = tf.get_variable('best_selection', shape=shape, dtype=tf.int32, initializer=initializer) #Different for each layer
 
         if context.mode == ModularMode.E_STEP:
             best_selection = tf.gather(best_selection_persistent, context.data_indices)[tf.newaxis]
-            samples = ctrl_bern.sample()
+            # samples = ctrl_bern.sample()
+            unif_samples = tf.random_uniform(shape=[tf.shape(logits)[0], tf.shape(logits)[1]], maxval=1)
+            samples = tf.cast(tf.where(logits>unif_samples,
+                                x=tf.ones_like(logits),
+                                y=tf.zeros_like(logits)), tf.int32)
             sampled_selection = tf.reshape(samples, [context.sample_size, -1, modules.module_count]) 
             selection = tf.concat([best_selection, sampled_selection[1:]], axis=0)
             selection = tf.reshape(selection, [-1, modules.module_count])
-
-            # selection = tf.cast(selection, tf.int32)
+            selection = tf.cast(selection, tf.int32)
         elif context.mode == ModularMode.M_STEP:
             selection = tf.gather(best_selection_persistent, context.data_indices)
         elif context.mode == ModularMode.EVALUATION:
-            selection = ctrl_bern.mode()
+            selection = tf.cast(tf.where(logits>0.5,
+                                x=tf.ones_like(logits),
+                                y=tf.zeros_like(logits)), tf.int32)
         else:
             raise ValueError('Invalid modular mode')
 
-        attrs = ModularLayerAttributes(selection, best_selection_persistent, ctrl_bern)
+        attrs = ModularLayerAttributes(selection, best_selection_persistent, ctrl_bern,
+                                        logits)
         context.layers.append(attrs)
-        return run_masked_modules(inputs, selection, modules.module_fnc, modules.output_shape), logits, best_selection_persistent
+        return run_masked_modules_withloop(inputs, selection, modules.module_fnc, modules.output_shape), logits, best_selection_persistent
 
 
 def modularize_target(target, context: ModularContext):

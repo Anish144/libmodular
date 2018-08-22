@@ -11,6 +11,7 @@ from tqdm import tqdm
 import numpy as np
 from libmodular.modular import create_m_step_summaries, M_STEP_SUMMARIES
 
+from tensorflow.python import debug as tf_debug
 
 def generator(arrays, batch_size):
     """Generate batches, one with respect to each array's first axis."""
@@ -125,9 +126,10 @@ def run():
 
     try:
         with tf.Session() as sess:
+            # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
             time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
-            writer = tf.summary.FileWriter(f'logs/train_testing:Masked_25m_0.65initialiser_initialE_{time}',sess.graph)
-            test_writer = tf.summary.FileWriter(f'logs/test_testing:Masked_25m_0.65initialiser_initialE_{time}',sess.graph)
+            writer = tf.summary.FileWriter(f'logs/train_testing:EM_VIT_Masked_25m_0.65initialiser_initialE_{time}',sess.graph)
+            test_writer = tf.summary.FileWriter(f'logs/test_testing:EM_VIT_Masked_25m_0.65initialiser_initialE_{time}',sess.graph)
             summaries = tf.summary.merge_all()
             sess.run(tf.global_variables_initializer())
 
@@ -146,7 +148,7 @@ def run():
                     labels: batch_y,
                     data_indices: indices,
                 }
-                step = e_step if i % 25 == 0 else m_step
+                step = e_step if i % 5 == 0 else m_step
                 _, summary_data, log= sess.run([step, summaries, logits], feed_dict)
 
 

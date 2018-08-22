@@ -102,8 +102,8 @@ def run():
     config.gpu_options.allow_growth = True
     with tf.Session(config=config) as sess:
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
-        writer = tf.summary.FileWriter(f'logs/train_10m_masked_withsummary_naiveklreg=0.3_{time}', sess.graph)
-        test_writer = tf.summary.FileWriter(f'logs/test_10m_masked_withsummary_naiveklreg=0.3_{time}', sess.graph)
+        writer = tf.summary.FileWriter(f'logs/train_10m_masked_withsummary_EM_VIT_=0.3_{time}', sess.graph)
+        test_writer = tf.summary.FileWriter(f'logs/test_10m_masked_withsummary_EM_VIT_=0.3_{time}', sess.graph)
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
         sess.run(tf.global_variables_initializer())
