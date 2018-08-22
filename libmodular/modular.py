@@ -126,6 +126,48 @@ def run_masked_modules(inputs, selection, module_fnc, output_shape):
     return output
 
 
+def run_masked_modules_withloop(inputs, selection, mask, module_fnc, output_shape):
+
+    batch_size = tf.shape(inputs)[0]
+    if output_shape is not None:
+        output_shape = [batch_size] + output_shape
+    else:
+        # This is the only way I am aware of to get the output shape easily
+        dummy = module_fnc(inputs, 0)
+        output_shape = [batch_size] + dummy.shape[1:].as_list()
+
+    #Used modules is just a list of modules that we are using
+    used_modules = get_unique_modules(selection)
+
+    condition = lambda accum, used_module, i: tf.less(i, tf.shape(used_modules)[0])
+
+    def compute_module(accum, used_module, i):
+
+        module = tf.slice(used_module, [i], [1])
+        inputs_considered = tf.slice(selection, 
+                                    [0, module[0]], 
+                                    [batch_size, 1])
+        re_mask = tf.reshape(tf.equal(1,inputs_considered), [-1])
+        indices = tf.where(re_mask)
+        affected_inp = tf.boolean_mask(inputs, re_mask)
+
+        output = module_fnc(affected_inp, module[0])
+
+        #Add the outputs, scatter_nd makes it the right shape with 0s for inputs not computed
+        full_output =  accum + tf.scatter_nd(indices, 
+                                            output, 
+                                            tf.cast(output_shape, tf.int64)) 
+
+        i = tf.add(i, 1)
+        return full_output, used_modules, i
+
+    i = tf.constant(0, tf.int32)
+    output = tf.while_loop(
+        condition, compute_module, [tf.zeros(output_shape), used_modules, i])[0]
+
+    return output
+
+
 def e_step(template, sample_size, dataset_size, data_indices):
     context = ModularContext(ModularMode.E_STEP, data_indices, dataset_size, sample_size)
 

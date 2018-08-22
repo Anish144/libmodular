@@ -107,10 +107,7 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext, initializ
         flat_inputs = tf.layers.flatten(inputs)
 
         logits = tf.layers.dense(flat_inputs, modules.module_count)
-        # probs = tf.sigmoid(logits)
-        # greater = tf.greater(probs, 0.5)
-        # gate = tf.cast(greater, tf.int32)
-
+        logits = tf.maximum(tf.contrib.sparsemax.sparsemax(logits), 1e-20)
 
         ctrl_bern = tfd.Bernoulli(logits) #Create controller with logits
 
@@ -124,20 +121,25 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext, initializ
 
         if context.mode == ModularMode.E_STEP:
             best_selection = tf.gather(best_selection_persistent, context.data_indices)[tf.newaxis]
-            samples = ctrl_bern.sample()
+            unif_sample = tf.random_uniform(shape=[tf.shape(logits)[0], tf.shape(logits)[1]])
+            samples = tf.cast(tf.where(logits>unif_sample,
+                                x=tf.ones_like(logits),
+                                y=tf.zeros_like(logits)), tf.int32)
             sampled_selection = tf.reshape(samples, [context.sample_size, -1, modules.module_count]) 
             selection = tf.concat([best_selection, sampled_selection[1:]], axis=0)
             selection = tf.reshape(selection, [-1, modules.module_count])
-
-            # selection = tf.cast(selection, tf.int32)
+            selection = tf.cast(selection, tf.int32)
         elif context.mode == ModularMode.M_STEP:
             selection = tf.gather(best_selection_persistent, context.data_indices)
         elif context.mode == ModularMode.EVALUATION:
-            selection = ctrl_bern.mode()
+            selection = tf.cast(tf.where(logits>0.5,
+                                x=tf.ones_like(logits),
+                                y=tf.zeros_like(logits)), tf.int32)
         else:
             raise ValueError('Invalid modular mode')
 
-        attrs = ModularLayerAttributes(selection, best_selection_persistent, ctrl_bern)
+        attrs = ModularLayerAttributes(selection, best_selection_persistent, ctrl_bern,
+                                        logits)
         context.layers.append(attrs)
         return run_masked_modules(inputs, selection, modules.module_fnc, modules.output_shape), logits, best_selection_persistent
 
