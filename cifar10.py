@@ -90,7 +90,7 @@ def run():
 
     masked_bernoulli = False
     sample_size = 2
-    epoch_lim = 40.
+    epoch_lim = 10.
 
     iteration_number = tf.placeholder(dtype=tf.float32,
                                 shape=[],

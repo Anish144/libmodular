@@ -469,10 +469,11 @@ def get_damper(iteration, damp_list):
     return tf.slice(damp_list, [tf.cast(iteration, tf.int32)], [1])
 
 def get_damp_list(epoch_lim):
-    iteration = tf.range(epoch_lim)
-    term_1 = (epoch_lim-iteration)
-    damp = term_1/epoch_lim
-    return tf.reverse(damp, axis=[0])
+    # iteration = tf.range(epoch_lim)
+    # term_1 = (epoch_lim-iteration)
+    # damp = term_1/epoch_lim
+    # return tf.reverse(damp, axis=[0])
+    return tf.concat([tf.zeros(epoch_lim-1), tf.ones(1)], 0)
 
 def evaluation(template, data_indices, dataset_size):
     context = ModularContext(ModularMode.EVALUATION, data_indices, dataset_size)
