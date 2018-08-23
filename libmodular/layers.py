@@ -279,7 +279,9 @@ def reinforce_mask(
 
         if context.mode == ModularMode.EVALUATION:
             test_pi = mean_of_beta(a, b)
-            selection = mode_of_bernoulli(test_pi)  
+            selection = tf.cast(tf.where(test_pi>0.5,
+                                x=tf.ones_like(test_pi),
+                                y=tf.zeros_like(test_pi)), tf.int32)
             final_selection = tf.tile(
                 selection, [tf.shape(inputs)[0]])
             final_selection = tf.reshape(
@@ -301,8 +303,8 @@ def reinforce_mask(
                 pi, selection, test_pi, test_pi)
         
 def mean_of_beta(a, b):
-    return tf.distributions.Beta(a, b).mean()
-
+    return tf.divide(a,a+b)
+    
 def mode_of_bernoulli(pi):
     return tfd.Bernoulli(pi).mode()
 
