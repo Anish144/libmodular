@@ -415,7 +415,7 @@ def e_step(template, sample_size, dataset_size, data_indices):
 
 def m_step(
     template, optimizer, dataset_size, 
-    data_indices, variational, num_batches, beta, sample_size, iteration):
+    data_indices, variational, num_batches, beta, sample_size, iteration, epoch_lim):
 
     context = ModularContext(ModularMode.M_STEP, data_indices, dataset_size, sample_size)
 
@@ -436,19 +436,11 @@ def m_step(
     else:
         print('VAR')
         loglikelihood = template(context)[0]
-        # log_pi = context.get_pi_logprob(0.005)
-        # log_kum = context.get_kumaraswamy_logprob()
-        # log_pi = tf.check_numerics(log_pi, 'logpi')
-        # log_kum = tf.check_numerics(log_kum, 'log_kum')
-        # score_term = (beta/num_batches) * (log_pi - log_kum)
 
-        # joint_objective = - (tf.reduce_sum(loglikelihood) + score_term)
-
-
-        damp = get_damper(iteration, get_damp_list(num_batches))
+        damp = get_damper(iteration, get_damp_list(epoch_lim))
 
         KL = context.get_variational_kl(0.1, beta)
-        mod_KL = tf.reduce_sum((1/num_batches) * KL)
+        mod_KL = tf.reduce_sum((damp) * (1/num_batches) * KL)
 
         joint_objective = - (loglikelihood - mod_KL)
 
@@ -456,17 +448,17 @@ def m_step(
         tf.summary.scalar('ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
         module_objective =  tf.reduce_sum(loglikelihood)
         tf.summary.scalar('module_objective', -module_objective, collections=[M_STEP_SUMMARIES])
-        # tf.summary.scalar('damp', tf.reduce_sum(damp), collections=[M_STEP_SUMMARIES])
+        tf.summary.scalar('damp', tf.reduce_sum(damp), collections=[M_STEP_SUMMARIES])
+        tf.summary.scalar('Real KL', tf.reduce_sum(KL), collections=[M_STEP_SUMMARIES])
 
 
         tf.add_to_collection(name='mod_KL',
                             value=mod_KL)
-        # tf.add_to_collection(name='Damp',
-        #                     value=damp)
+        tf.add_to_collection(name='Damp',
+                            value=damp)
         tf.add_to_collection(name='KL',
                             value=KL)
 
-    # with tf.control_dependencies([moving_average]):
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(update_ops):
         opt = optimizer.minimize(joint_objective)
@@ -476,12 +468,10 @@ def m_step(
 def get_damper(iteration, damp_list):
     return tf.slice(damp_list, [tf.cast(iteration, tf.int32)], [1])
 
-def get_damp_list(num_batches):
-    iteration = tf.range(num_batches)
-    term_1 = (num_batches-iteration)
-    # term_2 = num_batches*tf.log(2.)
-    # damp = tf.exp(term_1 - term_2)
-    damp = term_1/tf.reduce_sum(term_1)
+def get_damp_list(epoch_lim):
+    iteration = tf.range(epoch_lim)
+    term_1 = (epoch_lim-iteration)
+    damp = term_1/epoch_lim
     return tf.reverse(damp, axis=[0])
 
 def evaluation(template, data_indices, dataset_size):

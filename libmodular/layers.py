@@ -605,9 +605,9 @@ def modularize(template, optimizer, dataset_size, data_indices,
 
 def modularize_variational(template, optimizer, dataset_size, 
                           data_indices, variational, num_batches, beta,
-                         sample_size, iteration):
+                         sample_size, iteration, epoch_lim):
     m = m_step(template, optimizer, dataset_size, data_indices, 
-               variational, num_batches, beta, sample_size, iteration)
+               variational, num_batches, beta, sample_size, iteration, epoch_lim)
     eval = evaluation(template, data_indices, dataset_size)
     return m, eval
 

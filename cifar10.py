@@ -7,9 +7,11 @@ import observations
 from tqdm import tqdm
 import sys
 from tensorflow.python import debug as tf_debug
-# import matplotlib.pyplot as plt
+import os
 from libmodular.modular import create_m_step_summaries, M_STEP_SUMMARIES, get_tensor_op, get_op, get_KL
 from libmodular.layers import create_ema_opt
+
+cwd = os.getcwd()
 
 REALRUN = sys.argv[1]
 E_step = sys.argv[2]
@@ -88,6 +90,7 @@ def run():
 
     masked_bernoulli = False
     sample_size = 2
+    epoch_lim = 40.
 
     iteration_number = tf.placeholder(dtype=tf.float32,
                                 shape=[],
@@ -103,11 +106,6 @@ def run():
         l_out_log = []
         pi_log = []
         bs_perst_log = []
-
-        # for js in range(1):
-        #     input_channels = activation.shape[-1]
-        #     filter_shape = [3, 3, input_channels, 8]
-        #     activation = modular.conv_layer(activation, filter_shape, strides=[1,1,1,1])
 
         modules_list = [32, 64]
         for j in range(len(modules_list)):
@@ -177,12 +175,8 @@ def run():
         predicted = tf.argmax(logits, axis=-1, output_type=tf.int32)
         accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, target), tf.float32))
 
-        # selection_entropy = context.selection_entropy()
-        # batch_selection_entropy = context.batch_selection_entropy()
 
         return (loglikelihood, logits, accuracy, 
-                # batch_selection_entropy, 
-                # selection_entropy, 
                 ctrl_logits, s_log, 
                 context, pi_log, bs_perst_log)
 
@@ -191,8 +185,6 @@ def run():
 
     (ll, logits, 
     accuracy, 
-    # bs_entropy, 
-    # s_entropy, 
     ctrl_logits, 
     s_log, 
     context, 
@@ -200,7 +192,6 @@ def run():
                                                data_indices,
                                                dataset_size)
 
-    # with tf.control_dependencies([create_ema_opt()]):
     optimizer = tf.train.AdamOptimizer(learning_rate=0.001)
 
     if variational == 'False':
@@ -210,7 +201,7 @@ def run():
     else:
         m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
                                                   data_indices, variational, num_batches, 
-                                                  beta, sample_size, iteration_number)
+                                                  beta, sample_size, iteration_number, epoch_lim)
 
     #Summaries
     params = context.layers
@@ -231,9 +222,8 @@ def run():
 
     create_summary(tf.reduce_mean(ll), 'loglikelihood', 'scalar')
     create_summary(accuracy, 'accuracy', 'scalar')
-    # create_summary(tf.exp(s_entropy), 'entropy/exp_selection', 'scalar')
-    # create_summary(tf.exp(bs_entropy), 'entropy/exp_batch_selection', 'scalar')
 
+    saver = tf.train.Saver(keep_checkpoint_every_n_hours=2)
 
 
     with tf.Session() as sess:
@@ -241,18 +231,6 @@ def run():
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
 
         if REALRUN=='True':
-        #     writer = tf.summary.FileWriter(f'logs/train:Cifar10_16m_ADDED_Moving_average:0.99999_TNOINPUTADD_NOESTEP_:alpha:0.5_Initial_a=3.8-4.2,b=1.8-2.2_lr:0.001:'+f'_{time}', sess.graph)
-        #     test_writer = tf.summary.FileWriter(f'logs/test:Cifar10_16m_ADDED_Moving_average:0.99999_TNOINPUTADD_NOESTEP_:alpha:0.5_Initial_a=3.8-4.2,b=1.8-2.2_lr:0.001:'+f'_{time}', sess.graph)
-            # writer = tf.summary.FileWriter(f'logs/train:Cifar10_Variational_moving_FIX_alpha=1.9_a=3.8-4.2,b=1.8-2.2_{time}')
-            # test_writer = tf.summary.FileWriter(f'logs/test:Cifar10_Variational_moving_FIX_alpha=1.9_a=3.8-4.2,b=1.8-2.2_{time}')
-            # writer = tf.summary.FileWriter(
-            #     f'logs/train:Cifar10_ADDED_ctrl_3layer +1denseodular_layer_FULLTEST_{time}', sess.graph)
-            # test_writer = tf.summary.FileWriter(
-            #     f'logs/test:Cifar10_ADDED_ctrl_3layer+1denseodular_layer_FULLTEST_{time}', sess.graph)
-            # writer = tf.summary.FileWriter(
-            #     f'logs/train:Variational_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1_nostopgrads__withetakhigamma{time}', sess.graph)
-            # test_writer = tf.summary.FileWriter(
-            #     f'logs/test:Variational_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1__nostopgrads__withetakhigamma{time}', sess.graph)
             test_writer = tf.summary.FileWriter(
                 f'logs/test:Cifar10_variational_mask:a:1.5_b:0.5_alpha:0.05_samples:2_linerlayerbatchnorm_{time}', sess.graph)
             writer = tf.summary.FileWriter(
@@ -288,18 +266,6 @@ def run():
                     [step, summaries, accuracy], 
                     train_dict)
 
-
-                # non_zeros = np.zeros((log.shape[0], log.shape[1]))
-                # j=0
-                # for i in log:
-                #     zeros = np.zeros((len(i)))
-                #     zeros[i>0.5] = 1
-                #     non_zeros[j,:] = zeros
-                #     j+=1
-                # plt.bar(np.arange(len(i)), np.sum(non_zeros, axis=0))
-                # plt.savefig('Sparsemaxtest.png')
-                # import pdb; pdb.set_trace()
-
                 if REALRUN=='True':
                     writer.add_summary(summary_data, global_step=i) 
 
@@ -318,14 +284,17 @@ def run():
 
             else:
                 sess.run(step, train_dict)
-                # print('modKL:', modKL)
-                # print('damp:', damp)
-                # print('KL', KL)
 
-            if i % (dataset_size//batch_size) == 0:
-                j_s=0.
+            if i % (dataset_size//batch_size) == 0 and j_s<epoch_lim-1:
+                j_s+=1.
+            elif j_s>epoch_lim-1
+                j_s = epoch_lim-1
             else:
-                j_s+=1
+                j_s = j_s
+
+        if not os.path.exists(os.path.dirname(cwd + '/model')):
+            os.makedirs(os.path.dirname(cwd + '/model'))
+        saver.save(sess, cwd + '/model')
 
         if REALRUN=='True':
             writer.close()
