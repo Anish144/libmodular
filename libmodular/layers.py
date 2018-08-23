@@ -291,7 +291,7 @@ def reinforce_mask(
                                         None, None, None)
         context.layers.append(attrs)
 
-        return (run_masked_modules_withloop_and_concat(inputs, 
+        return (run_masked_modules_withloop(inputs, 
                                     final_selection,
                                     z,
                                     shape,

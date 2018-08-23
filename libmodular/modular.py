@@ -276,7 +276,7 @@ def run_masked_modules_withloop(
         inputs_considered = tf.slice(selection, 
                                     [0, module[0]], 
                                     [batch_size, 1])
-        re_mask = tf.reshape(tf.equal(1.,inputs_considered), [-1])
+        re_mask = tf.reshape(tf.equal(1,inputs_considered), [-1])
         indices = tf.where(re_mask)
         affected_inp = tf.boolean_mask(inputs, re_mask)
 

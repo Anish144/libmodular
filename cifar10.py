@@ -102,11 +102,12 @@ def run():
         #     filter_shape = [3, 3, input_channels, 8]
         #     activation = modular.conv_layer(activation, filter_shape, strides=[1,1,1,1])
 
-        modules_list = [8, 16]
+        modules_list = [10, 10]
+        filters = [32, 64]
         for j in range(len(modules_list)):
             input_channels = activation.shape[-1]
             module_count = modules_list[j]
-            filter_shape = [3, 3, input_channels, 1]
+            filter_shape = [3, 3, input_channels, filters[j]]
             modules = modular.create_conv_modules(filter_shape, 
                                                   module_count, 
                                                   strides=[1, 1, 1, 1])
@@ -139,12 +140,13 @@ def run():
 
         flattened = tf.layers.flatten(activation)
 
-        modules_list = [8, 4]
+        modules_list = [8, 8]
+        units_list = [10, 5]
         for i in range(len(modules_list)):
             module_count = modules_list[i]
             modules = modular.create_dense_modules(
                         flattened, context, module_count,
-                        units=8, activation=tf.nn.relu)
+                        units=units_list[i], activation=tf.nn.relu)
             flattened, l, s, pi, bs = modular.reinforce_mask(
                                         flattened, modules, context, 
                                         0.001, tf.shape(inputs)[0])
