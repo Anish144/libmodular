@@ -287,7 +287,7 @@ def run():
 
             if i % (dataset_size//batch_size) == 0 and j_s<epoch_lim-1:
                 j_s+=1.
-            elif j_s>epoch_lim-1
+            elif j_s>epoch_lim-1:
                 j_s = epoch_lim-1
             else:
                 j_s = j_s
