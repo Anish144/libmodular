@@ -62,14 +62,14 @@ def run():
 
     dataset_size = x_train.shape[0]
 
-    batch_size = 250
+    batch_size = 50
     num_batches = dataset_size/batch_size
 
     # Train dataset
     train = get_dataset(x_train, y_train, batch_size)
 
     # Test dataset
-    test_batch_size = 2000
+    test_batch_size = 200
     test = get_dataset(x_test, y_test, test_batch_size)
 
     # Handle to switch between datasets
@@ -245,9 +245,9 @@ def run():
             # test_writer = tf.summary.FileWriter(
             #     f'logs/test:reinforce_check_2layer_alpha:0.3_a:2.9-20.1_b:2.9-20.1__nostopgrads__withetakhigamma{time}', sess.graph)
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_REINFORCE_4layer_a:1.5_b:0.5_alpha:0.05_w:10_samples:20_CONTROLVARIATE_with_linear_batchnorm_{time}', sess.graph)
+                f'logs/test:Cifar10_REINFORCE_4layer_a:1.5_b:0.5_alpha:0.05_w:10_samples:20_CONTROLVARIATE_ADING_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_REINFORCE_4layer_a:1.5_b:0.5_alpha:0.05_w:10_samples:20_CONTROLVARIATE_with_linear_batchnorm_{time}', sess.graph)
+                f'logs/train:Cifar10_REINFORCE_4layer_a:1.5_b:0.5_alpha:0.05_w:10_samples:20_CONTROLVARIATE_ADING_{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
