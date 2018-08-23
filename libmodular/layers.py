@@ -297,7 +297,7 @@ def variational_mask(
             new_weights = tf.einsum('mio,bm->bmio', modules.weight, tf.cast(z, tf.float32))
             new_biases = tf.einsum('mo,bm->bmo', modules.bias, tf.cast(z, tf.float32))
 
-        return (run_masked_modules_withloop_and_concat(inputs, 
+        return (run_non_modular(inputs, 
                                     final_selection,
                                     z,
                                     shape,

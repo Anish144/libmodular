@@ -232,9 +232,9 @@ def run():
 
         if REALRUN=='True':
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_variational_mask:a:1.5_b:0.5_alpha:0.05_samples:2_linerlayerbatchnorm_{time}', sess.graph)
+                f'logs/test:Cifar10_variational_mask:a:1.5_b:0.5_alpha:0.05_samples:2_linerlayerbatchnorm_NONMODULAR_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_variational_mask:a:1.5_b:0.5_alpha:0.05_samples:2_linerlayerbatchnorm_{time}', sess.graph)
+                f'logs/train:Cifar10_variational_mask:a:1.5_b:0.5_alpha:0.05_samples:2_linerlayerbatchnorm_NONMODULAR_{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
