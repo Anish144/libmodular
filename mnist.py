@@ -80,13 +80,14 @@ def run():
     variational = 'True'
     masked_bernoulli = False
     new_controller = False
+    epoch_lim = 8
 
     iteration = tf.placeholder(name='iteration',
                         shape=[],
                         dtype=tf.float32)
 
     beta = 1.
-    sample_size = 1
+    sample_size = 2
 
     iteration_number = tf.placeholder(dtype=tf.float32,
                                 shape=[],
@@ -98,14 +99,15 @@ def run():
             Instantiation of the ModularContext class
         """
         hidden = inputs
-        units = [4, 2]
-        layers = len(units)
+        module_count_list = [80, 40, 20, 5]
+        layers = len(module_count_list)
         s_log = []
         ctrl_logits =[]
         pi_log = []
         bs_perst_log = []
 
         for i in range(layers):
+            module_count = module_count_list[i]
             if masked_bernoulli:
 
                 modules = modular.create_dense_modules(hidden, 
@@ -121,9 +123,9 @@ def run():
 
                 modules = modular.create_dense_modules(hidden, 
                                                         module_count, 
-                                                        units=units[i], 
+                                                        units=16, 
                                                         activation=tf.nn.relu) 
-                hidden, l, s, bs, pi = modular.beta_bernoulli(hidden, 
+                hidden, l, s, bs, pi = modular.dep_variational_mask(hidden, 
                                                                 modules, 
                                                                 context, 
                                                                 0.001,
@@ -166,7 +168,7 @@ def run():
     if variational == 'True':
         m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
                                                   data_indices, variational, num_batches, beta,
-                                                  sample_size, iteration_number)
+                                                  sample_size, iteration_number, epoch_lim)
     else:
         e_step, m_step, eval = modular.modularize(template, optimizer, dataset_size,
                                                   data_indices, sample_size=10, variational=variational)
@@ -193,9 +195,9 @@ def run():
             # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
 
             if REALRUN=='True':
-                writer = tf.summary.FileWriter(f'logs/train:_4layer_16modules_a:.1.6_b:0.1_alpha:0.1_beta:1_lr:0.05_BETBERN_{time}',
+                writer = tf.summary.FileWriter(f'logs/train:_4layer_MNIST_a:.1.5_b:0.1_alpha:0.1_beta:1_lr:0.0005_DEPENDENT_MASK_{time}',
                                                 sess.graph)
-                test_writer = tf.summary.FileWriter(f'logs/test:_4layer_16modules_a:1.6_b:0.1_alpha:0.1_beta:1_lr:0.05_BETBERN_{time}',
+                test_writer = tf.summary.FileWriter(f'logs/test:_4layer_MNIST_a:1.5_b:0.1_alpha:0.1_beta:1_lr:0.0005_DEPENDENT_MASK_{time}',
                                                     sess.graph)
             general_summaries = tf.summary.merge_all()
             m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
@@ -210,14 +212,14 @@ def run():
                         }
                 sess.run(e_step, feed_dict)
 
-            j=0.    
+            j_s=0.    
             batches = generator([x_train, y_train, np.arange(dataset_size)], batch_size)
             for i, (batch_x, batch_y, indices) in tqdm(enumerate(batches)):
                 feed_dict = {
                     inputs: batch_x,
                     labels: batch_y,
                     data_indices: indices,
-                    iteration_number: j
+                    iteration_number: j_s
                 }
                 if variational == 'True':
                     step = m_step
@@ -236,11 +238,12 @@ def run():
 
                 #     if REALRUN=='True':
                 #         test_writer.add_summary(summary_data, global_step=i)
-                if i % (dataset_size//batch_size) == 0:
-                    j=0
+                if i % (dataset_size//batch_size) == 0 and j_s<epoch_lim-1:
+                    j_s+=1.
+                elif j_s>epoch_lim-1:
+                    j_s = epoch_lim-1
                 else:
-                    j+=1
-
+                    j_s = j_s
             writer.close()
             test_writer.close()
 

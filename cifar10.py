@@ -90,7 +90,7 @@ def run():
 
     masked_bernoulli = False
     sample_size = 2
-    epoch_lim = 10.
+    epoch_lim = 14.
 
     iteration_number = tf.placeholder(dtype=tf.float32,
                                 shape=[],
@@ -107,7 +107,7 @@ def run():
         pi_log = []
         bs_perst_log = []
 
-        modules_list = [32, 64]
+        modules_list = [32, 64, 128]
         for j in range(len(modules_list)):
             input_channels = activation.shape[-1]
             module_count = modules_list[j]
@@ -124,7 +124,7 @@ def run():
 
             elif variational == 'True':
                 print('Variational')
-                hidden, l, s, pi, bs = modular.variational_mask(
+                hidden, l, s, pi, bs = modular.dep_variational_mask(
                     activation, modules, context, 0.001, tf.shape(inputs_tr)[0])
                 hidden = modular.batch_norm(hidden)
 
@@ -155,7 +155,7 @@ def run():
             modules = modular.create_dense_modules(
                 flattened, module_count,
                 units=8, activation=tf.nn.relu)
-            flattened, l, s, pi, bs = modular.variational_mask(
+            flattened, l, s, pi, bs = modular.dep_variational_mask(
                 flattened, modules, context, 0.001,  tf.shape(inputs_tr)[0])
             flattened = modular.batch_norm(flattened)
 
@@ -203,7 +203,7 @@ def run():
                                                   data_indices, variational, num_batches, 
                                                   beta, sample_size, iteration_number, epoch_lim)
 
-    #Summaries
+    #summaries
     params = context.layers
     a_list = [l.a for l in params]
     b_list = [l.b for l in params]
@@ -232,9 +232,9 @@ def run():
 
         if REALRUN=='True':
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_variational_mask:a:1.5_b:0.5_alpha:0.05_samples:2_linerlayerbatchnorm_NONMODULAR_{time}', sess.graph)
+                f'logs/test:Cifar10_variational_mask:a:3.5_b:0.5_alpha:0.05_samples:2_epochlim:14_Dependent_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_variational_mask:a:1.5_b:0.5_alpha:0.05_samples:2_linerlayerbatchnorm_NONMODULAR_{time}', sess.graph)
+                f'logs/train:Cifar10_variational_mask:a:3.5_b:0.5_alpha:0.05_samples:2_epochlim:14_Dependent_{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])

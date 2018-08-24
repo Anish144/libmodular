@@ -250,22 +250,28 @@ def variational_mask(
         a = tf.get_variable(name='a', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform(
-                                [shape], minval=1.5, maxval=1.5)) + 1e-20
+                                [shape], minval=3.5, maxval=3.5)) + 1e-20
         b = tf.get_variable(name='b', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform(
-                                [shape], minval=0.2, maxval=0.2)) + 1e-20
+                                [shape], minval=0.3, maxval=0.3)) + 1e-20
 
         pi = get_pi(a, b, u_shape)
+        pi_batch = tf.expand_dims(pi, 1)
+        pi_batch = tf.tile(
+                pi_batch, [1, tile_shape, 1])
+        pi_batch = tf.reshape(
+                pi_batch, 
+                [tile_shape*context.sample_size, shape])
 
         tau = 0.01
-        z = relaxed_bern(tau, pi, pi.shape.as_list())
-        z = tf.expand_dims(z, 1)
-        z = tf.tile(
-                z, [1, tile_shape, 1])
-        z = tf.reshape(
-                z, 
-                [tile_shape*context.sample_size, shape])
+        z = relaxed_bern(tau, pi_batch, [tile_shape*context.sample_size, shape])
+        # z = tf.expand_dims(z, 1)
+        # z = tf.tile(
+        #         z, [1, tile_shape, 1])
+        # z = tf.reshape(
+        #         z, 
+        #         [tile_shape*context.sample_size, shape])
 
         if context.mode == ModularMode.M_STEP:
             test_pi = pi
@@ -344,44 +350,34 @@ def dep_variational_mask(
         a = tf.maximum(tf.get_variable(name='a', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform(
-                                [shape], minval=10.5, maxval=10.5)), 1e-20)
+                                [shape], minval=3.5, maxval=3.5)), 1e-20)
         b = tf.maximum(tf.get_variable(name='b', 
                             dtype=tf.float32, 
                             initializer=tf.random_uniform(
                                 [shape], minval=0.3, maxval=0.3)), 1e-20)
 
         pi = get_pi(a, b, u_shape)
+        pi_batch = tf.expand_dims(pi, 1)
+        pi_batch = tf.tile(
+                pi_batch, [1, tile_shape, 1])
+        pi_batch = tf.reshape(
+                pi_batch, 
+                [tile_shape*context.sample_size, shape])
 
-        # a = a, 'a here')
-        # b = b, 'b here')
-
-        # pi = tf.expand_dims(pi, 1)
-        # pi = tf.tile(
-        #         pi, [1, tile_shape, 1])
-        # pi = tf.reshape(
-        #         pi, 
-        #         [tile_shape*context.sample_size, shape])
-
-        initializer = tf.truncated_normal_initializer(mean=20.1, stddev=1)
+        initializer = tf.contrib.layers.xavier_initializer()
         def dependent_pi(inputs, pi):
             with tf.variable_scope('dep_pi', reuse=tf.AUTO_REUSE):
-                dep_input = tf.maximum(tf.layers.dense(inputs,
+                dep_input = tf.layers.dense(inputs,
                                             shape,
-                                            activation=tf.nn.relu,
-                                            kernel_initializer=initializer),1.)
+                                            activation=tf.sigmoid,
+                                            kernel_initializer=initializer)
                 return tf.multiply(dep_input, pi), dep_input
 
         dep_pi = tf.make_template('dependent_pi', dependent_pi)
 
-        new_pi, dep_input = dep_pi(flat_inputs, pi)
+        new_pi, dep_input = dep_pi(flat_inputs, pi_batch)
         tau = 0.01
-        z = relaxed_bern(tau, new_pi, [shape])
-        # z = tf.expand_dims(z, 1)
-        # z = tf.tile(
-        #         z, [1, tile_shape, 1])
-        # z = tf.reshape(
-        #         z, 
-        #         [tile_shape*context.sample_size, shape])
+        z = relaxed_bern(tau, new_pi, [tile_shape*context.sample_size, shape])
 
         if context.mode == ModularMode.M_STEP:
             test_pi = new_pi
@@ -425,7 +421,7 @@ def dep_variational_mask(
                                     modules.output_shape,
                                     new_weights,
                                     new_biases), 
-                new_pi, selection, test_pi, test_pi)
+                new_pi, selection, test_pi, dep_input)
 
         # return (run_non_modular(inputs,
         #                     final_selection,

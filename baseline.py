@@ -77,7 +77,7 @@ def run():
         #     filter_shape = [3, 3, input_channels, 8]
         #     activation = modular.conv_layer(activation, filter_shape, strides=[1,1,1,1])
 
-        modules_list = [32, 64]
+        modules_list = [32, 64, 128, 256]
         for j in range(len(modules_list)):
             input_channels = activation.shape[-1]
             module_count = modules_list[j]

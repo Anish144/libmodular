@@ -51,7 +51,7 @@ def network(context: modular.ModularContext):
     ctrl_logits =[]
     pi_log = []
     bs_perst_log = []
-    module_count = 10
+    module_count = 25
 
     for i in range(layers):
 
@@ -59,7 +59,7 @@ def network(context: modular.ModularContext):
                                               module_count, 
                                               units=units[i], 
                                               activation=tf.nn.relu) 
-      hidden, l, s, bs, pi = modular.beta_bernoulli(hidden, 
+      hidden, l, s, pi, bs = modular.dep_variational_mask(hidden, 
                                                       modules, 
                                                       context, 
                                                       0.001,
@@ -95,9 +95,10 @@ dataset_size=200
 data_indices = 1
 variational = 'True'
 sample_size = 1
+epoch_lim = 2.
 m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
                                           data_indices, variational, num_batches, beta,
-                                          sample_size, iteration_number)
+                                          sample_size, iteration_number, epoch_lim)
 
 ll, ctrl_logits, accuracy,  bs_perst_log, s_log, pi_log, context = eval
 
@@ -134,17 +135,18 @@ with tf.Session() as sess:
     feed_dict = {inputs:full_data,
                 labels:full_label}
 
-    js=0.    
+    j_s=0.    
     for i in tqdm(range(50000)):
-        feed_dict[iteration_number] = js
+        feed_dict[iteration_number] = j_s
         sess.run(step, feed_dict)
         summary = sess.run(general_summaries, feed_dict)
         writer.add_summary(summary, global_step=i)
-        if i<num_batches-1:
-          js+=1.
+        if i % 1 == 0 and j_s<epoch_lim-1:
+              j_s+=1.
+        elif j_s>epoch_lim-1:
+            j_s = epoch_lim-1
         else:
-          js=num_batches-1.
-
+              j_s = j_s
 
 writer.close()
 
