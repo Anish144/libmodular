@@ -10,7 +10,7 @@ ModularMode = Enum('ModularMode', 'E_STEP M_STEP EVALUATION')
 ModularLayerAttributes = namedtuple(
                             'ModularLayerAttributes', 
                             ['selection', 'best_selection', 
-                            'controller', 'probs'])
+                            'controller'])
 ModulePool = namedtuple('ModulePool', ['module_count', 'module_fnc', 'output_shape'])
 
 
@@ -40,14 +40,18 @@ class ModularContext:
             return -tf.reduce_sum(probs * tf.log(probs + 1e-30), axis=-1)
         return tf.reduce_mean([layer_entropy(layer) for layer in self.layers])
 
+    # def selection_logprob(self):
+    #     def layer_logprob(layer):
+    #         probs = self.layers[layer].probs
+    #         selection = tf.cast(self.layers[layer].selection, tf.float32)
+    #         term_1 = selection * tf.log(tf.maximum(probs, 1e-20))
+    #         term_2 = (1-selection) * tf.log(tf.maximum(1-probs, 1e-20))
+    #         return term_1 + term_2
+    #     x = [tf.reduce_sum(layer_logprob(attrs), axis=-1) for attrs in range(len(self.layers))]
+    #     return tf.reduce_sum(x, axis=0)
+
     def selection_logprob(self):
-        def layer_logprob(layer):
-            probs = self.layers[layer].probs
-            selection = tf.cast(self.layers[layer].selection, tf.float32)
-            term_1 = selection * tf.log(tf.maximum(probs, 1e-20))
-            term_2 = (1-selection) * tf.log(tf.maximum(1-probs, 1e-20))
-            return term_1 + term_2
-        x = [tf.reduce_sum(layer_logprob(attrs), axis=-1) for attrs in range(len(self.layers))]
+        x = [tf.reduce_sum(attrs.controller.log_prob(attrs.selection), axis=-1) for attrs in self.layers]
         return tf.reduce_sum(x, axis=0)
 
     def update_best_selection(self, best_selection_indices):
