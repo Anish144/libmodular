@@ -289,6 +289,10 @@ def variational_mask(
             final_selection = tf.reshape(
                 final_selection,[tf.shape(flat_inputs)[0], shape])
 
+            tf.add_to_collection(
+                name='sparsity',
+                value=final_selection)
+
         pseudo_ctrl = tfd.Bernoulli(probs=pi)
         attrs = ModularLayerAttributes(selection, 
                                         None, pseudo_ctrl, 
@@ -392,11 +396,14 @@ def dep_variational_mask(
                                 y=tf.zeros_like(new_pi)
                                 )
             final_selection = selection
-
             # final_selection = tf.tile(
             #     selection, [tf.shape(flat_inputs)[0]])
             # final_selection = tf.reshape(
-                # final_selection,[tf.shape(flat_inputs)[0], shape])
+            #     final_selection,[tf.shape(flat_inputs)[0], shape])
+
+            tf.add_to_collection(
+                name='sparsity',
+                value=final_selection)
 
         pseudo_ctrl = tfd.Bernoulli(probs=pi)
         attrs = ModularLayerAttributes(selection, 
@@ -411,6 +418,7 @@ def dep_variational_mask(
         else:
             new_weights = tf.einsum('mio,bm->bmio', modules.weight, tf.cast(z, tf.float32))
             new_biases = tf.einsum('mo,bm->bmo', modules.bias, tf.cast(z, tf.float32))
+
 
         return (run_masked_modules_withloop_and_concat(inputs, 
                                     final_selection,
@@ -609,3 +617,9 @@ def modularize_variational(template, optimizer, dataset_size,
 
 def create_ema_opt():
     return tf.group(*tf.get_collection('ema'))
+
+def get_sparsity_level():
+    return tf.get_collection('sparsity')
+
+
+

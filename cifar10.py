@@ -9,7 +9,7 @@ import sys
 from tensorflow.python import debug as tf_debug
 import os
 from libmodular.modular import create_m_step_summaries, M_STEP_SUMMARIES, get_tensor_op, get_op, get_KL
-from libmodular.layers import create_ema_opt
+from libmodular.layers import create_ema_opt, get_sparsity_level
 
 cwd = os.getcwd()
 
@@ -19,6 +19,13 @@ masked_bernoulli = sys.argv[3]
 variational = sys.argv[4]
 beta_bern = sys.argv[5]
 beta = 1
+
+def create_sparse_summary(sparse_ops):
+    def layer_sparsity(op):
+        batch_sparse = tf.reduce_sum(op, axis=1)/tf.cast((tf.shape(op)[1]), tf.float32)
+        return tf.reduce_mean(batch_sparse)
+    sparse_model = tf.reduce_mean([layer_sparsity(op) for op in sparse_ops ])
+    create_summary(sparse_model, 'Sparsity ratio', 'scalar')
 
 def get_initialiser(data_size, n, module_count):
     choice = np.zeros((data_size, n), dtype=int)
@@ -67,14 +74,14 @@ def run():
 
     dataset_size = x_train.shape[0]
 
-    batch_size = 100
+    batch_size = 50
     num_batches = dataset_size/batch_size
 
     # Train dataset
     train = get_dataset(x_train, y_train, batch_size)
 
     # Test dataset
-    test_batch_size = 250
+    test_batch_size = 100
     test = get_dataset(x_test, y_test, test_batch_size)
 
     # Handle to switch between datasets
@@ -90,7 +97,7 @@ def run():
 
     masked_bernoulli = False
     sample_size = 2
-    epoch_lim = 14.
+    epoch_lim = 15.
 
     iteration_number = tf.placeholder(dtype=tf.float32,
                                 shape=[],
@@ -107,7 +114,7 @@ def run():
         pi_log = []
         bs_perst_log = []
 
-        modules_list = [32, 64, 128]
+        modules_list = [32, 64, 128, 256, 512]
         for j in range(len(modules_list)):
             input_channels = activation.shape[-1]
             module_count = modules_list[j]
@@ -149,21 +156,21 @@ def run():
 
         flattened = tf.layers.flatten(activation)
 
-        modules_list = [8, 4]
-        for i in range(len(modules_list)):
-            module_count = modules_list[i]
-            modules = modular.create_dense_modules(
-                flattened, module_count,
-                units=8, activation=tf.nn.relu)
-            flattened, l, s, pi, bs = modular.dep_variational_mask(
-                flattened, modules, context, 0.001,  tf.shape(inputs_tr)[0])
-            flattened = modular.batch_norm(flattened)
+        # modules_list = [8, 4]
+        # for i in range(len(modules_list)):
+        #     module_count = modules_list[i]
+        #     modules = modular.create_dense_modules(
+        #         flattened, module_count,
+        #         units=8, activation=tf.nn.relu)
+        #     flattened, l, s, pi, bs = modular.dep_variational_mask(
+        #         flattened, modules, context, 0.001,  tf.shape(inputs_tr)[0])
+        #     flattened = modular.batch_norm(flattened)
 
 
-            ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
-            s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
-            pi_log.append(pi)
-            bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
+            # ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
+            # s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
+            # pi_log.append(pi)
+            # bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
 
         logits = tf.layers.dense(flattened, units=10)
 
@@ -183,14 +190,7 @@ def run():
     template = tf.make_template('network', network, masked_bernoulli=masked_bernoulli, 
                                 variational=variational)
 
-    (ll, logits, 
-    accuracy, 
-    ctrl_logits, 
-    s_log, 
-    context, 
-    pi_log, bs_perst_log) = modular.evaluation(template,
-                                               data_indices,
-                                               dataset_size)
+
 
     optimizer = tf.train.AdamOptimizer(learning_rate=0.001)
 
@@ -203,6 +203,13 @@ def run():
                                                   data_indices, variational, num_batches, 
                                                   beta, sample_size, iteration_number, epoch_lim)
 
+    (ll, logits, 
+    accuracy, 
+    ctrl_logits, 
+    s_log, 
+    context, 
+    pi_log, bs_perst_log) = eval
+
     #summaries
     params = context.layers
     a_list = [l.a for l in params]
@@ -210,6 +217,9 @@ def run():
     eta_list = [l.eta for l in params]
     khi_list = [l.khi for l in params]
     gamma_list = [l.gamma for l in params]
+
+
+    create_sparse_summary(get_sparsity_level())
 
 
     create_summary(a_list, 'a', 'histogram')
@@ -232,9 +242,9 @@ def run():
 
         if REALRUN=='True':
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_variational_mask:a:3.5_b:0.5_alpha:0.05_samples:2_epochlim:14_Dependent_{time}', sess.graph)
+                f'logs/test:Cifar10_variational_mask:a:3.5_b:0.5_alpha:0.01_samples:2_epochlim:10_anneal:5_Dependent_BIG_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_variational_mask:a:3.5_b:0.5_alpha:0.05_samples:2_epochlim:14_Dependent_{time}', sess.graph)
+                f'logs/train:Cifar10_variational_mask:a:3.5_b:0.5_alpha:0.01_samples:2_epochlim:10_anneal:5_Dependent_BIG_{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
@@ -260,7 +270,7 @@ def run():
                 step = e_step if i % 1 == 0 else m_step
 
             # Sometimes generate summaries
-            if i % 400 == 0: 
+            if i % 50 == 0: 
                 summaries = m_step_summaries
                 _, summary_data, test_accuracy = sess.run(
                     [step, summaries, accuracy], 
@@ -292,9 +302,9 @@ def run():
             else:
                 j_s = j_s
 
-        if not os.path.exists(os.path.dirname(cwd + '/model')):
-            os.makedirs(os.path.dirname(cwd + '/model'))
-        saver.save(sess, cwd + '/model')
+        # if not os.path.exists(os.path.dirname(cwd + '/model')):
+        #     os.makedirs(os.path.dirname(cwd + '/model'))
+        # saver.save(sess, cwd + '/model')
 
         if REALRUN=='True':
             writer.close()

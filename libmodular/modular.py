@@ -235,7 +235,7 @@ def run_masked_modules_withloop(
         output_shape = [batch_size] + output_shape
     else:
         # This is the only way I am aware of to get the output shape easily
-        dummy = module_fnc(inputs, 0, mask)
+        dummy = module_fnc(inputs, 0, mask, weight, bias)
         output_shape = [batch_size] + dummy.shape[1:].as_list()
 
     #Used modules is just a list of modules that we are using
@@ -439,7 +439,7 @@ def m_step(
 
         damp = get_damper(iteration, get_damp_list(epoch_lim))
 
-        KL = context.get_variational_kl(0.2, beta)
+        KL = context.get_variational_kl(0.01, beta)
         mod_KL = tf.reduce_sum((damp) * (1/num_batches) * KL)
 
         joint_objective = - (loglikelihood - mod_KL)
@@ -469,11 +469,11 @@ def get_damper(iteration, damp_list):
     return tf.slice(damp_list, [tf.cast(iteration, tf.int32)], [1])
 
 def get_damp_list(epoch_lim):
-    # iteration = tf.range(epoch_lim)
-    # term_1 = (epoch_lim-iteration)
-    # damp = term_1/epoch_lim
-    # return tf.reverse(damp, axis=[0])
-    return tf.concat([tf.zeros(epoch_lim-1), tf.ones(1)], 0)
+    iteration = tf.cast(tf.range(5), tf.float32)
+    term_1 = (5-iteration)
+    damp = term_1/tf.constant(5.,dtype=tf.float32)
+    anneal = tf.reverse(damp, axis=[0])
+    return tf.concat([tf.zeros(epoch_lim-5), anneal], 0)
 
 def evaluation(template, data_indices, dataset_size):
     context = ModularContext(ModularMode.EVALUATION, data_indices, dataset_size)

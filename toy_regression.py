@@ -10,28 +10,33 @@ from tensorflow.python import debug as tf_debug
 import numpy as np
 from libmodular.modular import create_m_step_summaries, M_STEP_SUMMARIES, get_tensor_op
 import sys
-import os
 
-cwd = os.getcwd()
+import math
+def rotate(origin, point, angle):
+    """
+    Rotate a point counterclockwise by a given angle around a given origin.
 
-batch=2000
+    The angle should be given in radians.
+    """
+    ox, oy = origin
+    px = point[:,0]
+    py = point[:,1]
+
+    qx = ox + math.cos(angle) * (px - ox) - math.sin(angle) * (py - oy)
+    qy = oy + math.sin(angle) * (px - ox) + math.cos(angle) * (py - oy)
+    final = np.zeros((point.shape[0], point.shape[1]))
+    final[:,0] = qx
+    final[:,1] = qy
+    return final
+
+batch=1000
 
 inputs = tf.placeholder(name='x',
                   shape=[batch*2,2],
                   dtype=tf.float32)
 labels = tf.placeholder(name='y',
-                  shape=[batch*2],
+                  shape=[batch*2,2],
                   dtype=tf.int32)
-
-# b = tf.get_variable(name='bias_linear',
-#                    shape=[2],
-#                    dtype=tf.float32)
-# W = tf.get_variable(name='weight_linear',
-#                    shape=[2,2],
-#                    dtype=tf.float32,
-#                    initializer=tf.contrib.layers.xavier_initializer())
-
-# hidden_true = tf.matmul(inputs,W) + b
 
 def create_summary(list_of_ops_or_op, name, summary_type):
     summary = getattr(tf.summary, summary_type)
@@ -58,15 +63,13 @@ def network(context: modular.ModularContext):
         Instantiation of the ModularContext class
     """
     hidden = inputs
-    units = [2]
+    units = [200]
     layers = len(units)
     s_log = []
     ctrl_logits =[]
     pi_log = []
     bs_perst_log = []
-    module_count = 10
-
-
+    module_count = 6
 
     for i in range(layers):
 
@@ -74,7 +77,7 @@ def network(context: modular.ModularContext):
                                               module_count, 
                                               units=units[i], 
                                               activation=tf.nn.relu) 
-      hidden, l, s, pi, bs = modular.variational_mask(hidden, 
+      hidden, l, s, pi, bs = modular.dep_variational_mask(hidden, 
                                                       modules, 
                                                       context, 
                                                       0.001,
@@ -89,19 +92,20 @@ def network(context: modular.ModularContext):
     # logits = hidden
 
     target = modular.modularize_target(labels, context)
-    loglikelihood = tf.distributions.Categorical(logits).log_prob(target)
+    loglikelihood = -tf.losses.mean_squared_error(target, logits)
 
     loglikelihood = sum_and_mean_il(loglikelihood, context.sample_size)
 
-    predicted = tf.argmax(logits, axis=-1, output_type=tf.int32)
-    accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, target), tf.float32))
+    # predicted = tf.argmax(logits, axis=-1, output_type=tf.int32)
+    # accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, target), tf.float32))
+    accuracy = tf.constant(1)
 
     return (loglikelihood, ctrl_logits, accuracy,
             bs_perst_log,  s_log, pi_log, context)
 
 template = tf.make_template('network', 
                             network)
-optimizer = tf.train.AdamOptimizer(learning_rate=0.001)
+optimizer = tf.train.AdamOptimizer(learning_rate=0.005)
 
 iteration_number=tf.placeholder(dtype=tf.float32, shape=[])
 num_batches=1.
@@ -109,7 +113,7 @@ beta=1
 dataset_size=200
 data_indices = 1
 variational = 'True'
-sample_size = 5
+sample_size = 1
 epoch_lim = 200.
 m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
                                           data_indices, variational, num_batches, beta,
@@ -134,8 +138,6 @@ create_summary(accuracy, 'accuracy', 'scalar')
 
 create_summary(get_tensor_op(), 'Mod KL', 'scalar')
 
-# saver = tf.train.Saver({'bias_linear':b,
-#                         'weight_linear':W})
 
 with tf.Session() as sess:
     # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
@@ -143,19 +145,27 @@ with tf.Session() as sess:
     step = m_step
     init = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
     general_summaries = tf.summary.merge_all()
-    writer = tf.summary.FileWriter(f'toy/TOY_Independent_Separable_2unitmodules_{time}')
-    data_1 = np.random.normal(loc=8.0, scale=1.0, size=(batch, 2))
-    data_2 = np.random.normal(loc=10.0, scale=1.0, size=(batch, 2))
-    full_data = np.concatenate([data_1, data_2], axis=0)
-    label_1 = np.zeros(batch, dtype=int)
-    label_2 = np.ones(batch, dtype=int) 
-    full_label = np.concatenate([label_1, label_2], axis=0)
-    sess.run(init)
-    # saver.restore(sess, cwd+"/toy_weights/model.ckpt")
+    writer = tf.summary.FileWriter(f'toy/TOY_REgression_{time}')
 
+    x_1 = np.random.multivariate_normal(
+            mean=np.array([-5.0, -5.0]), 
+            cov=np.array([[1,0],[0,1]]),
+            size=batch)
+
+    x_2 = np.random.multivariate_normal(
+            mean=np.array([20.0, 20.0]),
+            cov=np.array([[10,0],[0,1]]),
+            size=batch)
+    full_data = np.concatenate([x_1, x_2])
+    target_1 = x_1 @ np.array([[9,0],[0,5]])
+    theta=30
+    target_2 = rotate((20,20), x_2, math.radians(theta))
+    full_target = np.concatenate([target_1, target_2])
+
+    sess.run(init)
 
     feed_dict = {inputs:full_data,
-                labels:full_label}
+                labels:full_target}
 
     j_s=0.    
     for i in tqdm(range(50000)):
