@@ -420,7 +420,7 @@ def dep_variational_mask(
             new_biases = tf.einsum('mo,bm->bmo', modules.bias, tf.cast(z, tf.float32))
 
 
-        return (run_masked_modules_withloop_and_concat(inputs, 
+        return (run_masked_modules_withloop(inputs, 
                                     final_selection,
                                     z,
                                     shape,

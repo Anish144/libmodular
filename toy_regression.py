@@ -63,7 +63,7 @@ def network(context: modular.ModularContext):
         Instantiation of the ModularContext class
     """
     hidden = inputs
-    units = [200]
+    units = [2]
     layers = len(units)
     s_log = []
     ctrl_logits =[]
@@ -88,8 +88,8 @@ def network(context: modular.ModularContext):
     ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
     bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
 
-    logits = tf.layers.dense(hidden, 2)
-    # logits = hidden
+    # logits = tf.layers.dense(hidden, 2)
+    logits = hidden
 
     target = modular.modularize_target(labels, context)
     loglikelihood = -tf.losses.mean_squared_error(target, logits)
