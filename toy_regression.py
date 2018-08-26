@@ -29,7 +29,7 @@ def rotate(origin, point, angle):
     final[:,1] = qy
     return final
 
-batch=1000
+batch=3000
 
 inputs = tf.placeholder(name='x',
                   shape=[batch*2,2],
@@ -114,7 +114,7 @@ dataset_size=200
 data_indices = 1
 variational = 'True'
 sample_size = 1
-epoch_lim = 200.
+epoch_lim = 400.
 m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
                                           data_indices, variational, num_batches, beta,
                                           sample_size, iteration_number, epoch_lim)
