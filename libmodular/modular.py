@@ -113,6 +113,47 @@ def run_modules(inputs, selection, module_fnc, output_shape):
     return output #[sample * B x 10 (=units)]
 
 
+def run_modules_concat(inputs, selection, module_fnc, output_shape, module_count):
+
+    batch_size = tf.shape(inputs)[0]
+    if output_shape is not None:
+        output_shape = [batch_size] + output_shape
+    else:
+        # This is the only way I am aware of to get the output shape easily
+        dummy = module_fnc(inputs, 0)
+        output_shape = [batch_size] + dummy.shape[1:].as_list()   
+    #Used modules is just a list of modules that we are using
+    used_modules, _ = tf.unique(tf.reshape(selection, (-1,))) #Size = No. of Modules
+    condition = lambda accum, module, i: tf.less(i, 
+                                                module_count)
+
+    output_array = tf.TensorArray(dtype=tf.float32,
+                               size=module_count)
+
+    def compute_module(accum, module, i):
+        mask = tf.equal(module, selection) #select all the elements with the module we are using
+        import pdb; pdb.set_trace()
+        #OR operation on parallel axis, so that the input is passed through the module if any of the parallel has selected it
+        reduced_mask = tf.reduce_any(mask, axis=-1) 
+        indices = tf.where(reduced_mask) #Coordinates of TRUE
+        affected_inp = tf.boolean_mask(inputs, reduced_mask) #Selects the batches that will go through this module
+        output = module_fnc(affected_inp, module)
+
+        scatter = tf.scatter_nd(indices, output, tf.cast(output_shape, tf.int64))
+        accum_write = accum.write(i, scatter)
+
+        i = tf.add(i, 1)
+        return accum_write, module, i
+
+    i = tf.constant(0, tf.int32)
+    output = tf.while_loop(
+                condition, compute_module, [output_array, used_modules, i])[0]
+
+    full_output = output.stack()
+
+    return full_output 
+
+
 def run_masked_modules(inputs, selection, module_fnc, output_shape):
 
     batch_size = tf.shape(inputs)[0]

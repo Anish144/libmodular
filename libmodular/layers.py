@@ -3,7 +3,7 @@ from tensorflow.contrib import distributions as tfd
 import numpy as np
 
 from libmodular.modular import ModulePool, ModularContext, ModularMode, ModularLayerAttributes
-from libmodular.modular import run_modules, run_masked_modules, e_step, m_step, evaluation, run_masked_modules_withloop
+from libmodular.modular import run_modules, run_masked_modules, e_step, m_step, evaluation, run_masked_modules_withloop, run_modules_concat
 
 
 def create_dense_modules(inputs_or_shape, module_count: int, units: int = None, activation=None):
@@ -41,10 +41,24 @@ def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
         biases = tf.get_variable('biases', biases_shape, initializer=tf.zeros_initializer())
 
         def module_fnc(x, a):
-
+            masm = a
             return tf.nn.conv2d(x, filter[a], strides, padding) + biases[a]
 
         return ModulePool(module_count, module_fnc, output_shape=None)
+
+
+def conv_layer(x, shape, strides, padding='SAME'):
+    with tf.variable_scope(None, 'simple_conv_layer'):
+        filter_shape = list(shape)
+        filter = tf.get_variable(
+            'filter', filter_shape, initializer=tf.contrib.layers.xavier_initializer())
+        biases_shape = [shape[-1]]
+        biases = tf.get_variable(
+            'biases', biases_shape, initializer=tf.zeros_initializer())
+        hidden = tf.nn.conv2d(x, filter, strides, padding) + biases
+        pooled = tf.nn.max_pool(
+            hidden, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
+        return tf.nn.relu(pooled)
 
 
 def modular_layer(inputs, modules: ModulePool, parallel_count: int, context: ModularContext):
