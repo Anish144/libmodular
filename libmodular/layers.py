@@ -2,8 +2,14 @@ import tensorflow as tf
 from tensorflow.contrib import distributions as tfd
 import numpy as np
 
-from libmodular.modular import ModulePool, ModularContext, ModularMode, ModularLayerAttributes, VariationalLayerAttributes
-from libmodular.modular import run_modules, run_masked_modules, e_step, m_step, evaluation, run_masked_modules_withloop, run_modules_withloop, run_masked_modules_withloop_and_concat, run_non_modular
+from libmodular.modular import ModulePool, ModularContext, ModularMode,
+from libmodular.modular import ModularLayerAttributes
+from libmodular.modular import VariationalLayerAttributes
+from libmodular.modular import run_modules, run_masked_modules, e_step, m_step
+from libmodular.modular import evaluation, run_masked_modules_withloop,
+from libmodular.modular import run_modules_withloop
+from libmodular.modular import run_masked_modules_withloop_and_concat,
+from libmodular.modular import run_non_modular
 from tensorflow.python import debug as tf_debug
 
 
@@ -18,13 +24,20 @@ def run_once(f):
     return wrapper
 
 
-def create_dense_modules(inputs_or_shape, module_count: int, units: int = None, activation=None):
+def create_dense_modules(
+    inputs_or_shape,
+    module_count,
+    units,
+    activation=None
+):
+
     """
-    Takes in input, module count, units, and activation and returns a named tuple with a function
+    Takes in input, module count, units, and activation and returns a named
+    tuple with a function
     that returns the multiplcation of a sepcific module with the input
     """
     with tf.variable_scope(None, 'dense_modules'):
-        if hasattr(inputs_or_shape, 'shape') and units is not None: #Checks if input has attribute shape and takes last
+        if hasattr(inputs_or_shape, 'shape') and units is not None:  ##Checks if input has attribute shape and takes last
             weights_shape = [module_count, inputs_or_shape.shape[-1].value, units] #First dimension is the weights of a specific module
         else:
             weights_shape = [module_count] + inputs_or_shape
@@ -330,7 +343,7 @@ def variational_mask(
 
 def dep_variational_mask(
     inputs, modules: ModulePool, 
-    context: ModularContext, eps, tile_shape):
+    context: ModularContext, eps, tile_shape, iteration):
     """
     Constructs a Bernoulli masked layer that outputs sparse 
     binary masks dependent on the input
@@ -390,16 +403,41 @@ def dep_variational_mask(
 
         elif context.mode == ModularMode.EVALUATION:
             test_pi = get_test_pi(a, b)
-            new_pi, dep_input = dep_pi(flat_inputs, test_pi)
-            selection = tf.where(new_pi>0.5,
+
+            def before_cond():
+                new_pi, dep_input = dep_pi(flat_inputs, test_pi)
+                selection = tf.where(new_pi>0.5,
                                 x=tf.ones_like(new_pi),
                                 y=tf.zeros_like(new_pi)
                                 )
-            final_selection = selection
-            # final_selection = tf.tile(
-            #     selection, [tf.shape(flat_inputs)[0]])
-            # final_selection = tf.reshape(
-            #     final_selection,[tf.shape(flat_inputs)[0], shape])
+                final_selection = selection
+                return final_selection, selection
+
+            def after_ind():
+                selection = tf.where(test_pi>0.5,
+                                    x=tf.ones_like(test_pi),
+                                    y=tf.zeros_like(test_pi)
+                                    )
+                final_selection = selection
+                final_selection = tf.tile(
+                selection, [tf.shape(flat_inputs)[0]])
+                final_selection = tf.reshape(
+                final_selection,[tf.shape(flat_inputs)[0], shape])
+                return final_selection, selection
+
+            great_1 = tf.greater(iteration, tf.constant(6000.))
+            less_1 = tf.less(iteration, tf.constant(15000.))
+            cond_1 = tf.logical_and(great, less)
+
+            great_2 = tf.greater(iteration, tf.constant(30000.))
+            less_2 = tf.less(iteration, tf.constant(40000.))
+            cond_2 = tf.logical_and(great, less)
+
+            cond = tf.logical_or(cond_1, cond_2)
+
+            final_selection, selection = tf.cond(cond,
+                                                 after_ind,
+                                                 before_cond) 
 
             tf.add_to_collection(
                 name='sparsity',
@@ -420,7 +458,7 @@ def dep_variational_mask(
             new_biases = tf.einsum('mo,bm->bmo', modules.bias, tf.cast(z, tf.float32))
 
 
-        return (run_masked_modules_withloop(inputs, 
+        return (run_masked_modules_withloop_and_concat(inputs, 
                                     final_selection,
                                     z,
                                     shape,
@@ -476,9 +514,9 @@ def beta_bernoulli(
         tau = 0.1
         z = relaxed_bern(tau, pi, [tf.shape(pi)[0], tf.shape(pi)[1]])
 
-        # z = tf.tile(
-        #     z,
-        #     [tile_shape, 1])
+        z = tf.tile(
+            z,
+            [tile_shape, 1])
 
         if context.mode == ModularMode.M_STEP:
             test_pi = pi

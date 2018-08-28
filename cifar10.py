@@ -74,14 +74,14 @@ def run():
 
     dataset_size = x_train.shape[0]
 
-    batch_size = 50
+    batch_size = 25
     num_batches = dataset_size/batch_size
 
     # Train dataset
     train = get_dataset(x_train, y_train, batch_size)
 
     # Test dataset
-    test_batch_size = 100
+    test_batch_size = 50
     test = get_dataset(x_test, y_test, test_batch_size)
 
     # Handle to switch between datasets
@@ -97,11 +97,14 @@ def run():
 
     masked_bernoulli = False
     sample_size = 2
-    epoch_lim = 15.
+    epoch_lim = 20.
 
     iteration_number = tf.placeholder(dtype=tf.float32,
                                 shape=[],
                                 name='iteration_number')
+    iteration = tf.placeholder(dtype=tf.float32,
+                                shape=[],
+                                name='iteration')
 
     def network(context: modular.ModularContext, 
                 masked_bernoulli=False, 
@@ -114,7 +117,7 @@ def run():
         pi_log = []
         bs_perst_log = []
 
-        modules_list = [32, 64, 128, 256, 512]
+        modules_list = [32, 32, 128, 128, 512, 512]
         for j in range(len(modules_list)):
             input_channels = activation.shape[-1]
             module_count = modules_list[j]
@@ -132,7 +135,7 @@ def run():
             elif variational == 'True':
                 print('Variational')
                 hidden, l, s, pi, bs = modular.dep_variational_mask(
-                    activation, modules, context, 0.001, tf.shape(inputs_tr)[0])
+                    activation, modules, context, 0.001, tf.shape(inputs_tr)[0], iteration)
                 hidden = modular.batch_norm(hidden)
 
             elif beta_bern == 'True':
@@ -156,21 +159,21 @@ def run():
 
         flattened = tf.layers.flatten(activation)
 
-        # modules_list = [8, 4]
-        # for i in range(len(modules_list)):
-        #     module_count = modules_list[i]
-        #     modules = modular.create_dense_modules(
-        #         flattened, module_count,
-        #         units=8, activation=tf.nn.relu)
-        #     flattened, l, s, pi, bs = modular.dep_variational_mask(
-        #         flattened, modules, context, 0.001,  tf.shape(inputs_tr)[0])
-        #     flattened = modular.batch_norm(flattened)
+        modules_list = [8, 4]
+        for i in range(len(modules_list)):
+            module_count = modules_list[i]
+            modules = modular.create_dense_modules(
+                flattened, module_count,
+                units=8, activation=tf.nn.relu)
+            flattened, l, s, pi, bs = modular.dep_variational_mask(
+                flattened, modules, context, 0.001,  tf.shape(inputs_tr)[0], iteration)
+            flattened = modular.batch_norm(flattened)
 
 
-            # ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
-            # s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
-            # pi_log.append(pi)
-            # bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
+            ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
+            s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
+            pi_log.append(pi)
+            bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
 
         logits = tf.layers.dense(flattened, units=10)
 
@@ -242,9 +245,9 @@ def run():
 
         if REALRUN=='True':
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_variational_mask:a:3.5_b:0.5_alpha:0.01_samples:2_epochlim:10_anneal:5_Dependent_BIG_{time}', sess.graph)
+                f'logs/test:Cifar10_variational_mask:a:3.5_b:0.5_alpha:0.01_samples:2_epochlim:10_anneal:5_Dependent_NOPI_for_infer_between:6000-15000_AND_30000-40000_filters:32,32,128,128,512,512{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_variational_mask:a:3.5_b:0.5_alpha:0.01_samples:2_epochlim:10_anneal:5_Dependent_BIG_{time}', sess.graph)
+                f'logs/train:Cifar10_variational_mask:a:3.5_b:0.5_alpha:0.01_samples:2_epochlim:10_anneal:5_Dependent_NOPI_for_infer_between:6000-15000_AND_30000-40000_filters:32,32,128,128,512,512{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
@@ -263,6 +266,8 @@ def run():
             train_dict[iteration_number] = j_s
             test_dict[iteration_number] = j_s
 
+            train_dict[iteration] = i+0.
+            test_dict[iteration] = i+0.
 
             if variational or beta_bern == 'True':
                 step = m_step
