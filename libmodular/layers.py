@@ -94,7 +94,7 @@ def modular_layer(inputs, modules: ModulePool, parallel_count: int, context: Mod
         elif context.mode == ModularMode.M_STEP:
             selection = tf.gather(best_selection_persistent, context.data_indices)
         elif context.mode == ModularMode.EVALUATION:
-            selection = ctrl.mode()
+            selection = tf.cast(tf.random_uniform(shape=[tf.shape(flat_inputs)[0], parallel_count]), tf.int32)
         else:
             raise ValueError('Invalid modular mode')
 

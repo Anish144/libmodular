@@ -68,7 +68,7 @@ def run():
             filter_shape = [3, 3, input_channels, 8]
             modules = modular.create_conv_modules(filter_shape, module_count, strides=[1, 2, 2, 1])
             if not masked_bernoulli:
-                hidden, l, bs = modular.modular_layer(activation, modules, parallel_count=3, context=context)
+                hidden, l, bs = modular.modular_layer(activation, modules, parallel_count=1, context=context)
                 l = tf.reshape(tf.cast(tf.nn.softmax(l), tf.float32), [1,-1,module_count,1])
                 logit.append(l)
                 bs = tf.reshape(tf.cast(bs, tf.float32), [1,-1,module_count,1])
@@ -112,8 +112,8 @@ def run():
     config.gpu_options.allow_growth = True
     with tf.Session(config=config) as sess:
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
-        writer = tf.summary.FileWriter(f'logs/train_5m_withsummary_EM_VIT_2layer_3parallel_{time}', sess.graph)
-        test_writer = tf.summary.FileWriter(f'logs/test_5m_withsummary_EM_VIT_2layer_3parallel_{time}', sess.graph)
+        writer = tf.summary.FileWriter(f'logs/train_5m_withsummary_EM_VIT_2layer_1parallel_random_inference_{time}', sess.graph)
+        test_writer = tf.summary.FileWriter(f'logs/test_5m_withsummary_EM_VIT_2layer_1parallel_random_inference_{time}', sess.graph)
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
         sess.run(tf.global_variables_initializer())
@@ -128,7 +128,7 @@ def run():
         #         }
         # sess.run(e_step, feed_dict)
 
-        for i in tqdm(range(500000)):
+        for i in tqdm(range(200000)):
             # Switch between E-step and M-step
             step = e_step if i % 50 == 0 else m_step
 
