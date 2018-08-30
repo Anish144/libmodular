@@ -99,7 +99,7 @@ class ModularContext:
     def get_naive_kl(self):
         def get_layer_kl(lay_number):
             probs = self.layers[lay_number].probs
-            reg_prob = 0.1
+            reg_prob = 0.3
             probs = tf.maximum(probs, 1e-20)
             term_1 = tf.multiply(reg_prob, tf.log(reg_prob) - tf.log(probs))
             term_2 = tf.multiply(1-reg_prob, tf.log(1-reg_prob) - tf.log(tf.maximum(1-probs, 1e-20)))
@@ -463,10 +463,10 @@ def m_step(
         damp = get_damper(iteration, get_damp_list(epoch_lim))
 
         KL = context.get_variational_kl(0.1, beta)
-        mod_KL = tf.reduce_sum((0) * (1/num_batches) * KL)
-        # ctrl_KL = tf.reduce_sum((1) * (1/num_batches) * context.get_gauss_kl())
+        mod_KL = tf.reduce_sum((damp) * (1/num_batches) * KL)
+        ctrl_KL = tf.reduce_sum((damp) * (1/num_batches) * context.get_naive_kl())
 
-        joint_objective = - (loglikelihood  - mod_KL  )
+        joint_objective = - (loglikelihood  - mod_KL )
 
         tf.summary.scalar('KL', mod_KL, collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])

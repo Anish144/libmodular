@@ -412,7 +412,7 @@ def dep_variational_mask(
                 #                     inputs_probs>0.5,
                 #                     x=tf.ones_like(inputs_probs),
                 #                     y=tf.zeros_like(inputs_probs))
-                return tf.multiply(inputs_probs, 1), inputs_probs
+                return tf.multiply(inputs_probs, pi), inputs_probs
 
         dep_pi = tf.make_template('dependent_pi', dependent_pi)
 
@@ -482,7 +482,7 @@ def dep_variational_mask(
             new_biases = tf.einsum('mo,bm->bmo', modules.bias, tf.cast(z, tf.float32))
 
 
-        return (run_masked_modules_withloop(inputs, 
+        return (run_masked_modules_withloop_and_concat(inputs, 
                                     final_selection,
                                     z,
                                     shape,

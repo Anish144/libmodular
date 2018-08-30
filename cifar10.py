@@ -1,4 +1,4 @@
-from libmodular.layers import create_ema_opt, get_sparsity_level
+from libmodular.layers import create_ema_opt, get_sparsity_level, get_dep_pi_level
 from libmodular.modular import create_m_step_summaries, M_STEP_SUMMARIES, get_tensor_op, get_op, get_KL
 from tensorflow.python import debug as tf_debug
 from tqdm import tqdm
@@ -99,7 +99,7 @@ def run():
 
     masked_bernoulli = False
     sample_size = 2
-    epoch_lim = 20.
+    epoch_lim = 15.
 
     iteration_number = tf.placeholder(dtype=tf.float32,
                                 shape=[],
@@ -119,7 +119,7 @@ def run():
         pi_log = []
         bs_perst_log = []
 
-        modules_list = [64,64,128,128,256,256]
+        modules_list = [64, 64, 128, 128, 256, 256]
         for j in range(len(modules_list)):
             input_channels = activation.shape[-1]
             module_count = modules_list[j]
@@ -161,21 +161,21 @@ def run():
 
         flattened = tf.layers.flatten(activation)
 
-        # modules_list = [8, 4]
-        # for i in range(len(modules_list)):
-        #     module_count = modules_list[i]
-        #     modules = modular.create_dense_modules(
-        #         flattened, module_count,
-        #         units=8, activation=tf.nn.relu)
-        #     flattened, l, s, pi, bs = modular.dep_variational_mask(
-        #         flattened, modules, context, 0.001,  tf.shape(inputs_tr)[0], iteration)
-        #     flattened = modular.batch_norm(flattened)
+        modules_list = [8]
+        for i in range(len(modules_list)):
+            module_count = modules_list[i]
+            modules = modular.create_dense_modules(
+                flattened, module_count,
+                units=8, activation=tf.nn.relu)
+            flattened, l, s, pi, bs = modular.dep_variational_mask(
+                flattened, modules, context, 0.001,  tf.shape(inputs_tr)[0], iteration)
+            flattened = modular.batch_norm(flattened)
 
 
-        #     ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
-        #     s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
-        #     pi_log.append(pi)
-        #     bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
+            ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
+            s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
+            pi_log.append(pi)
+            bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
 
         logits = tf.layers.dense(flattened, units=10)
 
@@ -236,6 +236,9 @@ def run():
     create_summary(tf.reduce_mean(ll), 'loglikelihood', 'scalar')
     create_summary(accuracy, 'accuracy', 'scalar')
 
+    create_summary(get_dep_pi_level(), 'dep_pi', 'histogram')
+
+
     saver = tf.train.Saver(keep_checkpoint_every_n_hours=2)
 
     with tf.Session() as sess:
@@ -244,9 +247,9 @@ def run():
 
         if REALRUN=='True':
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_variational_mask:a:3.5_b:0.5_alpha:0.01_samples:2_epochlim:10_anneal:5_Dependent_NOPI_for_infer_between:6000-15000_AND_30000-40000_filters:64,64,128,128,256,256__{time}', sess.graph)
+                f'logs/test:Cifar10_variational_mask:a:3.5_b:0.5_alpha:0.01_samples:2_epochlim:10_anneal:5_Dependent_NOPI_for_infer_between:6000-15000_AND_30000-40000_filters:64,64,128,128,256,256_New_Init_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_variational_mask:a:3.5_b:0.5_alpha:0.01_samples:2_epochlim:10_anneal:5_Dependent_NOPI_for_infer_between:6000-15000_AND_30000-40000_filters:64,64,128,128,256,256__{time}', sess.graph)
+                f'logs/train:Cifar10_variational_mask:a:3.5_b:0.5_alpha:0.01_samples:2_epochlim:10_anneal:5_Dependent_NOPI_for_infer_between:6000-15000_AND_30000-40000_filters:64,64,128,128,256,256_New_Init_{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])

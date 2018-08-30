@@ -78,7 +78,7 @@ def network(context: modular.ModularContext):
 
 
 
-    units = [2, 2]
+    units = [2]
     layers = len(units)
     s_log = []
     ctrl_logits =[]
