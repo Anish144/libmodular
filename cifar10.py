@@ -1,15 +1,15 @@
-import datetime
-import random
-import tensorflow as tf
-import numpy as np
-import libmodular as modular
-import observations
-from tqdm import tqdm
-import sys
-from tensorflow.python import debug as tf_debug
-import os
-from libmodular.modular import create_m_step_summaries, M_STEP_SUMMARIES, get_tensor_op, get_op, get_KL
 from libmodular.layers import create_ema_opt, get_sparsity_level
+from libmodular.modular import create_m_step_summaries, M_STEP_SUMMARIES, get_tensor_op, get_op, get_KL
+from tensorflow.python import debug as tf_debug
+from tqdm import tqdm
+import datetime
+import libmodular as modular
+import numpy as np
+import observations
+import os
+import random
+import sys
+import tensorflow as tf
 
 cwd = os.getcwd()
 
@@ -72,9 +72,11 @@ def run():
     y_test = y_test.astype(np.uint8)  # Fix test_data dtype
 
 
+    x_train, y_train = x_train[0:100,:,:,:], y_train[0:100]
+
     dataset_size = x_train.shape[0]
 
-    batch_size = 25
+    batch_size = 100
     num_batches = dataset_size/batch_size
 
     # Train dataset
@@ -117,7 +119,7 @@ def run():
         pi_log = []
         bs_perst_log = []
 
-        modules_list = [32, 32, 128, 128, 512, 512]
+        modules_list = [64,64,128,128,256,256]
         for j in range(len(modules_list)):
             input_channels = activation.shape[-1]
             module_count = modules_list[j]
@@ -159,21 +161,21 @@ def run():
 
         flattened = tf.layers.flatten(activation)
 
-        modules_list = [8, 4]
-        for i in range(len(modules_list)):
-            module_count = modules_list[i]
-            modules = modular.create_dense_modules(
-                flattened, module_count,
-                units=8, activation=tf.nn.relu)
-            flattened, l, s, pi, bs = modular.dep_variational_mask(
-                flattened, modules, context, 0.001,  tf.shape(inputs_tr)[0], iteration)
-            flattened = modular.batch_norm(flattened)
+        # modules_list = [8, 4]
+        # for i in range(len(modules_list)):
+        #     module_count = modules_list[i]
+        #     modules = modular.create_dense_modules(
+        #         flattened, module_count,
+        #         units=8, activation=tf.nn.relu)
+        #     flattened, l, s, pi, bs = modular.dep_variational_mask(
+        #         flattened, modules, context, 0.001,  tf.shape(inputs_tr)[0], iteration)
+        #     flattened = modular.batch_norm(flattened)
 
 
-            ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
-            s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
-            pi_log.append(pi)
-            bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
+        #     ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
+        #     s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
+        #     pi_log.append(pi)
+        #     bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
 
         logits = tf.layers.dense(flattened, units=10)
 
@@ -221,9 +223,7 @@ def run():
     khi_list = [l.khi for l in params]
     gamma_list = [l.gamma for l in params]
 
-
     create_sparse_summary(get_sparsity_level())
-
 
     create_summary(a_list, 'a', 'histogram')
     create_summary(b_list, 'b', 'histogram')
@@ -238,16 +238,15 @@ def run():
 
     saver = tf.train.Saver(keep_checkpoint_every_n_hours=2)
 
-
     with tf.Session() as sess:
         # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
 
         if REALRUN=='True':
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_variational_mask:a:3.5_b:0.5_alpha:0.01_samples:2_epochlim:10_anneal:5_Dependent_NOPI_for_infer_between:6000-15000_AND_30000-40000_filters:32,32,128,128,512,512{time}', sess.graph)
+                f'logs/test:Cifar10_variational_mask:a:3.5_b:0.5_alpha:0.01_samples:2_epochlim:10_anneal:5_Dependent_NOPI_for_infer_between:6000-15000_AND_30000-40000_filters:64,64,128,128,256,256__{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_variational_mask:a:3.5_b:0.5_alpha:0.01_samples:2_epochlim:10_anneal:5_Dependent_NOPI_for_infer_between:6000-15000_AND_30000-40000_filters:32,32,128,128,512,512{time}', sess.graph)
+                f'logs/train:Cifar10_variational_mask:a:3.5_b:0.5_alpha:0.01_samples:2_epochlim:10_anneal:5_Dependent_NOPI_for_infer_between:6000-15000_AND_30000-40000_filters:64,64,128,128,256,256__{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
@@ -261,7 +260,7 @@ def run():
                 _ = sess.run(e_step, train_dict)
 
         j_s = 0.
-        for i in tqdm(range(400000)):
+        for i in tqdm(range(100000)):
             # Switch between E-step and M-step
             train_dict[iteration_number] = j_s
             test_dict[iteration_number] = j_s
@@ -284,18 +283,18 @@ def run():
                 if REALRUN=='True':
                     writer.add_summary(summary_data, global_step=i) 
 
-                    summary_data = sess.run(summaries, test_dict)
-                    test_writer.add_summary(summary_data, global_step=i)
+                    # summary_data = sess.run(summaries, test_dict)
+                    # test_writer.add_summary(summary_data, global_step=i)
 
-                    accuracy_log = []
-                    for test in range(x_test.shape[0]//test_batch_size):
-                        test_accuracy = sess.run(accuracy, test_dict)
-                        accuracy_log.append(test_accuracy)
-                    final_accuracy = np.mean(accuracy_log)
-                    summary = tf.Summary()
-                    summary.value.add(tag='Test Accuracy', 
-                                      simple_value = final_accuracy)
-                    test_writer.add_summary(summary, global_step=i)
+                    # accuracy_log = []
+                    # for test in range(x_test.shape[0]//test_batch_size):
+                    #     test_accuracy = sess.run(accuracy, test_dict)
+                    #     accuracy_log.append(test_accuracy)
+                    # final_accuracy = np.mean(accuracy_log)
+                    # summary = tf.Summary()
+                    # summary.value.add(tag='Test Accuracy', 
+                    #                   simple_value = final_accuracy)
+                    # test_writer.add_summary(summary, global_step=i)
 
             else:
                 sess.run(step, train_dict)

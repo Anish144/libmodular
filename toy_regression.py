@@ -1,17 +1,18 @@
-import datetime
-import random
-import tensorflow as tf
-import numpy as np
-import libmodular as modular
-import observations
-from tqdm import tqdm
-from tensorflow.python import debug as tf_debug
 
-import numpy as np
 from libmodular.modular import create_m_step_summaries, M_STEP_SUMMARIES, get_tensor_op
-import sys
-
+from tensorflow.python import debug as tf_debug
+from libmodular.layers import create_ema_opt, get_sparsity_level, get_dep_pi_level
+from tqdm import tqdm
+import datetime
+import libmodular as modular
 import math
+import numpy as np
+import numpy as np
+import observations
+import random
+import sys
+import tensorflow as tf
+
 def rotate(origin, point, angle):
     """
     Rotate a point counterclockwise by a given angle around a given origin.
@@ -29,7 +30,7 @@ def rotate(origin, point, angle):
     final[:,1] = qy
     return final
 
-batch=3000
+batch=1000
 
 inputs = tf.placeholder(name='x',
                   shape=[batch*2,2],
@@ -37,6 +38,17 @@ inputs = tf.placeholder(name='x',
 labels = tf.placeholder(name='y',
                   shape=[batch*2,2],
                   dtype=tf.int32)
+iteration = tf.placeholder(
+                name='iteration',
+                shape=[],
+                dtype=tf.float32)
+
+def create_sparse_summary(sparse_ops):
+    def layer_sparsity(op):
+        batch_sparse = tf.reduce_sum(op, axis=1)/tf.cast((tf.shape(op)[1]), tf.float32)
+        return tf.reduce_mean(batch_sparse)
+    sparse_model = tf.reduce_mean([layer_sparsity(op) for op in sparse_ops ])
+    create_summary(sparse_model, 'Sparsity ratio', 'scalar')
 
 def create_summary(list_of_ops_or_op, name, summary_type):
     summary = getattr(tf.summary, summary_type)
@@ -63,33 +75,37 @@ def network(context: modular.ModularContext):
         Instantiation of the ModularContext class
     """
     hidden = inputs
-    units = [2]
+
+
+
+    units = [2, 2]
     layers = len(units)
     s_log = []
     ctrl_logits =[]
     pi_log = []
     bs_perst_log = []
-    module_count = 6
+    module_count = 2
 
     for i in range(layers):
 
-      modules = modular.create_dense_modules(hidden, 
+        modules = modular.create_dense_modules(hidden, 
                                               module_count, 
                                               units=units[i], 
                                               activation=tf.nn.relu) 
-      hidden, l, s, pi, bs = modular.dep_variational_mask(hidden, 
+        hidden, l, s, pi, bs = modular.dep_variational_mask(hidden, 
                                                       modules, 
                                                       context, 
                                                       0.001,
-                                                      tf.shape(inputs)[0])
-      pi_log.append(pi)
-      s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
+                                                      tf.shape(inputs)[0],
+                                                      iteration)
+        pi_log.append(pi)
+        s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
 
-    ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
-    bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
+        ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
+        bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
 
-    # logits = tf.layers.dense(hidden, 2)
-    logits = hidden
+    logits = tf.layers.dense(hidden, 2)
+    # logits = hidden
 
     target = modular.modularize_target(labels, context)
     loglikelihood = -tf.losses.mean_squared_error(target, logits)
@@ -114,7 +130,7 @@ dataset_size=200
 data_indices = 1
 variational = 'True'
 sample_size = 1
-epoch_lim = 400.
+epoch_lim = 10000.
 m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
                                           data_indices, variational, num_batches, beta,
                                           sample_size, iteration_number, epoch_lim)
@@ -138,6 +154,10 @@ create_summary(accuracy, 'accuracy', 'scalar')
 
 create_summary(get_tensor_op(), 'Mod KL', 'scalar')
 
+create_sparse_summary(get_sparsity_level())
+
+create_summary(get_dep_pi_level(), 'dep_pi', 'histogram')
+
 
 with tf.Session() as sess:
     # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
@@ -145,21 +165,22 @@ with tf.Session() as sess:
     step = m_step
     init = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
     general_summaries = tf.summary.merge_all()
-    writer = tf.summary.FileWriter(f'toy/TOY_REgression_{time}')
+    m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
+    writer = tf.summary.FileWriter(f'toy/TOY_REgression_init_{time}')
 
     x_1 = np.random.multivariate_normal(
-            mean=np.array([-5.0, -5.0]), 
+            mean=np.array([100.0, 100.0]), 
             cov=np.array([[1,0],[0,1]]),
             size=batch)
 
     x_2 = np.random.multivariate_normal(
-            mean=np.array([20.0, 20.0]),
-            cov=np.array([[10,0],[0,1]]),
+            mean=np.array([10.0, 10.0]),
+            cov=np.array([[10,0],[0,2]]),
             size=batch)
     full_data = np.concatenate([x_1, x_2])
-    target_1 = x_1 @ np.array([[9,0],[0,5]])
-    theta=30
-    target_2 = rotate((20,20), x_2, math.radians(theta))
+    target_1 = x_1 @ np.array([[10,0],[0,5]])
+    theta=270
+    target_2 = rotate((10,10), x_2, math.radians(theta))
     full_target = np.concatenate([target_1, target_2])
 
     sess.run(init)
@@ -170,8 +191,9 @@ with tf.Session() as sess:
     j_s=0.    
     for i in tqdm(range(50000)):
         feed_dict[iteration_number] = j_s
+        feed_dict[iteration] = i + 0.
         sess.run(step, feed_dict)
-        summary = sess.run(general_summaries, feed_dict)
+        summary = sess.run(m_step_summaries, feed_dict)
         writer.add_summary(summary, global_step=i)
         if i % 1 == 0 and j_s<epoch_lim-1:
               j_s+=1.

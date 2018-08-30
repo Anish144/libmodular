@@ -10,8 +10,8 @@ M_STEP_SUMMARIES = 'M_STEP_SUMMARIES'
 ModularMode = Enum('ModularMode', 'E_STEP M_STEP EVALUATION')
 ModularLayerAttributes = namedtuple('ModularLayerAttributes', 
                                     ['selection', 'best_selection', 
-                                    'controller', 'a', 'b', 'probs', 'beta', 
-                                    'beta_prior', 'eta', 'khi', 'gamma']
+                                    'controller', 'a', 'b', 'probs', 'mu', 
+                                    'sigma', 'eta', 'khi', 'gamma']
                                     )
 VariationalLayerAttributes = namedtuple('ModularLayerAttributes', 
                                     ['selection', 'controller', 'a', 'b', 'beta', 'beta_prior']
@@ -85,11 +85,36 @@ class ModularContext:
         """
         return [layer.controller for layer in self.layers]
 
+    def get_naive_reg(self):
+        def get_layer_reg(number):
+            z = self.layers[number].selection
+            probs = self.layers[number].probs
+            term_1 = z * tf.log(tf.maximum(probs, 1e-20))
+            term_2 = (1-z) * tf.log(tf.maximum(1-probs, 1e-20))
+            reg = tf.log(tf.maximum(1-probs, 1e-20))
+            return tf.reduce_sum(term_1 + term_2 - reg)
+        return tf.reduce_sum([get_layer_reg(i) for i in range(len(self.layers))])
+
+
     def get_naive_kl(self):
-        regulariser = tf.distributions.Bernoulli(0.3)
         def get_layer_kl(lay_number):
-            ctrl = self.layers[lay_number].controller
-            return tf.distributions.kl_divergence(ctrl, regulariser)
+            probs = self.layers[lay_number].probs
+            reg_prob = 0.1
+            probs = tf.maximum(probs, 1e-20)
+            term_1 = tf.multiply(reg_prob, tf.log(reg_prob) - tf.log(probs))
+            term_2 = tf.multiply(1-reg_prob, tf.log(1-reg_prob) - tf.log(tf.maximum(1-probs, 1e-20)))
+            return tf.reduce_sum(term_1 + term_2)
+        return tf.reduce_sum([get_layer_kl(i) for i in range(len(self.layers))])
+
+
+    def get_gauss_kl(self):
+        def get_layer_kl(lay_number):
+            mu = self.layers[lay_number].mu
+            sigma = self.layers[lay_number].sigma
+            prior = tfd.Normal(0.,1.)
+            var_approx = tfd.Normal(mu, sigma)
+            kl = tfd.kl_divergence(var_approx, prior)
+            return tf.reduce_sum(kl)
         return tf.reduce_sum([get_layer_kl(i) for i in range(len(self.layers))])
 
     def get_variational_kl(self, alpha, beta):
@@ -114,8 +139,6 @@ class ModularContext:
             term_log = tf.check_numerics(tf.log(tf.maximum(term_pi, 1e-20)), 'term_log')
             term_3 = tf.check_numerics(tf.multiply(b-1, term_log),'term_3')
             return tf.reduce_sum(term_1 + term_2 + term_3)
-            # kum = tfd.Kumaraswamy(a, b)
-            # return kum.log_prob(pi)
         return tf.reduce_sum([get_layer_logprob(i) for i in range(len(self.layers))])
 
     def get_pi_logprob(self, alpha):
@@ -439,10 +462,11 @@ def m_step(
 
         damp = get_damper(iteration, get_damp_list(epoch_lim))
 
-        KL = context.get_variational_kl(0.01, beta)
-        mod_KL = tf.reduce_sum((damp) * (1/num_batches) * KL)
+        KL = context.get_variational_kl(0.1, beta)
+        mod_KL = tf.reduce_sum((0) * (1/num_batches) * KL)
+        # ctrl_KL = tf.reduce_sum((1) * (1/num_batches) * context.get_gauss_kl())
 
-        joint_objective = - (loglikelihood - mod_KL)
+        joint_objective = - (loglikelihood  - mod_KL  )
 
         tf.summary.scalar('KL', mod_KL, collections=[M_STEP_SUMMARIES])
         tf.summary.scalar('ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
@@ -461,7 +485,8 @@ def m_step(
 
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(update_ops):
-        opt = optimizer.minimize(joint_objective)
+        opt = optimizer.minimize(
+                joint_objective)
 
     return opt
 

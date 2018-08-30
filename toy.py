@@ -58,13 +58,13 @@ def network(context: modular.ModularContext):
         Instantiation of the ModularContext class
     """
     hidden = inputs
-    units = [2]
+    units = [100]
     layers = len(units)
     s_log = []
     ctrl_logits =[]
     pi_log = []
     bs_perst_log = []
-    module_count = 10
+    module_count = 3
 
 
 
@@ -85,8 +85,7 @@ def network(context: modular.ModularContext):
     ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
     bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
 
-    logits = tf.layers.dense(hidden, 2)
-    # logits = hidden
+    logits = tf.layers.dense(hidden, 10)
 
     target = modular.modularize_target(labels, context)
     loglikelihood = tf.distributions.Categorical(logits).log_prob(target)
@@ -110,7 +109,7 @@ dataset_size=200
 data_indices = 1
 variational = 'True'
 sample_size = 5
-epoch_lim = 200.
+epoch_lim = 600.
 m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
                                           data_indices, variational, num_batches, beta,
                                           sample_size, iteration_number, epoch_lim)
@@ -143,8 +142,8 @@ with tf.Session() as sess:
     step = m_step
     init = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
     general_summaries = tf.summary.merge_all()
-    writer = tf.summary.FileWriter(f'toy/TOY_Independent_Separable_2unitmodules_{time}')
-    data_1 = np.random.normal(loc=8.0, scale=1.0, size=(batch, 2))
+    writer = tf.summary.FileWriter(f'toy/TOY_Independent_Separable_2unitmodules_FINAL_{time}')
+    data_1 = np.random.normal(loc=0.0, scale=1.0, size=(batch, 2))
     data_2 = np.random.normal(loc=10.0, scale=1.0, size=(batch, 2))
     full_data = np.concatenate([data_1, data_2], axis=0)
     label_1 = np.zeros(batch, dtype=int)
@@ -158,7 +157,7 @@ with tf.Session() as sess:
                 labels:full_label}
 
     j_s=0.    
-    for i in tqdm(range(50000)):
+    for i in tqdm(range(40000)):
         feed_dict[iteration_number] = j_s
         sess.run(step, feed_dict)
         summary = sess.run(general_summaries, feed_dict)
