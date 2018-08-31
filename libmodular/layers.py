@@ -368,7 +368,7 @@ def dep_variational_mask(
                 pi_batch, 
                 [tile_shape*context.sample_size, shape])
 
-        initializer = tf.contrib.layers.xavier_initializer()
+        initializer = tf.uniform_unit_scaling_initializer()
         def dependent_pi(inputs, pi):
             with tf.variable_scope('dep_pi', reuse=tf.AUTO_REUSE):
                 dep_input = tf.layers.dense(inputs,
@@ -380,6 +380,11 @@ def dep_variational_mask(
         dep_pi = tf.make_template('dependent_pi', dependent_pi)
 
         new_pi, dep_input = dep_pi(flat_inputs, pi_batch)
+
+        tf.add_to_collection(
+            name='dep_input',
+            value=dep_input)
+
         tau = 0.01
         z = relaxed_bern(tau, new_pi, [tile_shape*context.sample_size, shape])
 
@@ -465,10 +470,6 @@ def beta_bernoulli(
                 flat_inputs, modules.module_count,
                 activation=tf.nn.relu, kernel_initializer=initializer_b, name='var_b'),1e-10))
 
-        # a = tf.check_numerics(a, 'a variable')
-        # b = tf.check_numerics(b, 'b variable')
-
-
         u_shape = [tf.shape(a)[0], tf.shape(a)[1]]
 
         pi = get_pi(a, b, u_shape)
@@ -476,9 +477,7 @@ def beta_bernoulli(
         tau = 0.1
         z = relaxed_bern(tau, pi, [tf.shape(pi)[0], tf.shape(pi)[1]])
 
-        # z = tf.tile(
-        #     z,
-        #     [tile_shape, 1])
+
 
         if context.mode == ModularMode.M_STEP:
             test_pi = pi
@@ -621,5 +620,6 @@ def create_ema_opt():
 def get_sparsity_level():
     return tf.get_collection('sparsity')
 
-
+def get_dep_input():
+    return tf.get_collection('dep_input')
 

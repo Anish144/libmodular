@@ -9,6 +9,8 @@ from tensorflow.python import debug as tf_debug
 
 import numpy as np
 from libmodular.modular import create_m_step_summaries, M_STEP_SUMMARIES, get_tensor_op
+from libmodular.layers import create_ema_opt, get_sparsity_level, get_dep_input
+
 import sys
 
 import math
@@ -51,6 +53,14 @@ def create_summary(list_of_ops_or_op, name, summary_type):
     else:
         raise TypeError('Invalid type for summary')
 
+
+def create_sparse_summary(sparse_ops):
+    def layer_sparsity(op):
+        batch_sparse = tf.reduce_sum(op, axis=1)/tf.cast((tf.shape(op)[1]), tf.float32)
+        return tf.reduce_mean(batch_sparse)
+    sparse_model = tf.reduce_mean([layer_sparsity(op) for op in sparse_ops ])
+    create_summary(sparse_model, 'Sparsity ratio', 'scalar')
+
 def sum_and_mean_il(il, sample_size):
     il = tf.reshape(il, [-1,
                         sample_size])
@@ -63,7 +73,7 @@ def network(context: modular.ModularContext):
         Instantiation of the ModularContext class
     """
     hidden = inputs
-    units = [200]
+    units = [20]
     layers = len(units)
     s_log = []
     ctrl_logits =[]
@@ -73,20 +83,20 @@ def network(context: modular.ModularContext):
 
     for i in range(layers):
 
-      modules = modular.create_dense_modules(hidden, 
+        modules = modular.create_dense_modules(hidden, 
                                               module_count, 
                                               units=units[i], 
                                               activation=tf.nn.relu) 
-      hidden, l, s, pi, bs = modular.dep_variational_mask(hidden, 
+        hidden, l, s, pi, bs = modular.dep_variational_mask(hidden, 
                                                       modules, 
                                                       context, 
                                                       0.001,
                                                       tf.shape(inputs)[0])
-      pi_log.append(pi)
-      s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
+        pi_log.append(pi)
+        s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
 
-    ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
-    bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
+        ctrl_logits.append(tf.cast(tf.reshape(l, [1,-1,module_count,1]), tf.float32))
+        bs_perst_log.append(tf.cast(tf.reshape(bs, [1,-1,module_count,1]), tf.float32))
 
     logits = tf.layers.dense(hidden, 2)
     # logits = hidden
@@ -114,7 +124,7 @@ dataset_size=200
 data_indices = 1
 variational = 'True'
 sample_size = 1
-epoch_lim = 200.
+epoch_lim = 500.
 m_step, eval = modular.modularize_variational(template, optimizer, dataset_size,
                                           data_indices, variational, num_batches, beta,
                                           sample_size, iteration_number, epoch_lim)
@@ -137,6 +147,10 @@ create_summary(tf.reduce_sum(ll), 'loglikelihood', 'scalar')
 create_summary(accuracy, 'accuracy', 'scalar')
 
 create_summary(get_tensor_op(), 'Mod KL', 'scalar')
+
+create_summary(get_dep_input(), 'dep_input', 'histogram')
+
+create_sparse_summary(get_sparsity_level())
 
 
 with tf.Session() as sess:
