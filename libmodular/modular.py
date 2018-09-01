@@ -440,7 +440,7 @@ def m_step(
         damp = get_damper(iteration, get_damp_list(epoch_lim))
 
         KL = context.get_variational_kl(0.01, beta)
-        mod_KL = tf.reduce_sum((damp) * (1/num_batches) * KL)
+        mod_KL = tf.reduce_sum((1.) * (1/num_batches) * KL)
 
         joint_objective = - (loglikelihood - mod_KL)
 
