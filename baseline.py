@@ -77,18 +77,13 @@ def run():
         #     filter_shape = [3, 3, input_channels, 8]
         #     activation = modular.conv_layer(activation, filter_shape, strides=[1,1,1,1])
 
-        modules_list = [32, 64, 128, 256]
+        modules_list = [32, 64, 128]
         for j in range(len(modules_list)):
             input_channels = activation.shape[-1]
             module_count = modules_list[j]
             filter_shape = [3, 3, input_channels, modules_list[j]]
             activation = modular.conv_layer(activation, filter_shape, strides=[1,1,1,1])
-            hidden = modular.batch_norm(activation)
-            pooled = tf.nn.max_pool(
-                hidden, 
-                ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], 
-                padding='SAME')
-            activation = tf.nn.relu(pooled)
+ 
 
         flattened = tf.layers.flatten(activation)
 
@@ -142,10 +137,10 @@ def run():
         test_dict = {handle: make_handle(sess, test)}
 
 
-        for i in tqdm(range(400000)):
+        for i in tqdm(range(50000)):
 
             # Sometimes generate summaries
-            if i % 400 == 0: 
+            if i % 50 == 0: 
                 summaries = general_summaries
                 _, summary_data = sess.run(
                     [opt, summaries], 

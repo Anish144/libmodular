@@ -9,7 +9,7 @@ from tensorflow.python import debug as tf_debug
 
 import numpy as np
 from libmodular.modular import create_m_step_summaries, M_STEP_SUMMARIES, get_tensor_op
-from libmodular.layers import create_ema_opt, get_sparsity_level, get_dep_input
+from libmodular.layers import create_ema_opt, get_sparsity_level, get_dep_input, get_ctrl_bias, get_ctrl_weights
 
 import sys
 
@@ -73,13 +73,13 @@ def network(context: modular.ModularContext):
         Instantiation of the ModularContext class
     """
     hidden = inputs
-    units = [20]
+    units = [2]
     layers = len(units)
     s_log = []
     ctrl_logits =[]
     pi_log = []
     bs_perst_log = []
-    module_count = 6
+    module_count = 2
 
     for i in range(layers):
 
@@ -92,6 +92,9 @@ def network(context: modular.ModularContext):
                                                       context, 
                                                       0.001,
                                                       tf.shape(inputs)[0])
+        hidden = modular.batch_norm(hidden)
+        hidden  = tf.nn.relu(hidden)
+
         pi_log.append(pi)
         s_log.append(tf.cast(tf.reshape(s, [1,-1,module_count,1]), tf.float32))
 
@@ -115,7 +118,7 @@ def network(context: modular.ModularContext):
 
 template = tf.make_template('network', 
                             network)
-optimizer = tf.train.AdamOptimizer(learning_rate=0.005)
+optimizer = tf.train.AdamOptimizer(learning_rate=0.05)
 
 iteration_number=tf.placeholder(dtype=tf.float32, shape=[])
 num_batches=1.
@@ -150,8 +153,11 @@ create_summary(get_tensor_op(), 'Mod KL', 'scalar')
 
 create_summary(get_dep_input(), 'dep_input', 'histogram')
 
-create_sparse_summary(get_sparsity_level())
+create_summary(get_ctrl_bias(), 'ctrl_bias', 'histogram')
 
+create_summary(get_ctrl_weights(), 'ctrl_weights', 'histogram')
+
+create_sparse_summary(get_sparsity_level())
 
 with tf.Session() as sess:
     # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
@@ -159,15 +165,15 @@ with tf.Session() as sess:
     step = m_step
     init = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
     general_summaries = tf.summary.merge_all()
-    writer = tf.summary.FileWriter(f'toy/TOY_REgression_{time}')
+    writer = tf.summary.FileWriter(f'toy/TOY_REgression_With_batch_norm_MOD_{time}')
 
     x_1 = np.random.multivariate_normal(
-            mean=np.array([-5.0, -5.0]), 
+            mean=np.array([0.0, 0.0]), 
             cov=np.array([[1,0],[0,1]]),
             size=batch)
 
     x_2 = np.random.multivariate_normal(
-            mean=np.array([20.0, 20.0]),
+            mean=np.array([10.0, 10.0]),
             cov=np.array([[10,0],[0,1]]),
             size=batch)
     full_data = np.concatenate([x_1, x_2])

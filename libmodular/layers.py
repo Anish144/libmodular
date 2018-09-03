@@ -5,7 +5,7 @@ import numpy as np
 from libmodular.modular import ModulePool, ModularContext, ModularMode, ModularLayerAttributes, VariationalLayerAttributes
 from libmodular.modular import run_modules, run_masked_modules, e_step, m_step, evaluation, run_masked_modules_withloop, run_modules_withloop, run_masked_modules_withloop_and_concat, run_non_modular
 from tensorflow.python import debug as tf_debug
-
+import os
 
 def run_once(f):
     def wrapper(*args, **kwargs):
@@ -60,6 +60,7 @@ def conv_layer(x, shape, strides, padding='SAME'):
         biases = tf.get_variable(
             'biases', biases_shape, initializer=tf.zeros_initializer())
         hidden = tf.nn.conv2d(x, filter, strides, padding) + biases
+        hidden = batch_norm(hidden)
         pooled = tf.nn.max_pool(
             hidden, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
         return tf.nn.relu(pooled)
@@ -307,7 +308,7 @@ def variational_mask(
             new_weights = tf.einsum('mio,bm->bmio', modules.weight, tf.cast(z, tf.float32))
             new_biases = tf.einsum('mo,bm->bmo', modules.bias, tf.cast(z, tf.float32))
 
-        return (run_masked_modules_withloop_and_concat(inputs, 
+        return (run_non_modular(inputs, 
                                     final_selection,
                                     z,
                                     shape,
@@ -368,18 +369,50 @@ def dep_variational_mask(
                 pi_batch, 
                 [tile_shape*context.sample_size, shape])
 
-        initializer = tf.uniform_unit_scaling_initializer()
-        def dependent_pi(inputs, pi):
+        initializer = tf.uniform_unit_scaling_initializer(factor=1.43)
+        def dependent_pi(inputs, pi, inference):
             with tf.variable_scope('dep_pi', reuse=tf.AUTO_REUSE):
-                dep_input = tf.layers.dense(inputs,
-                                            shape,
-                                            activation=tf.sigmoid,
-                                            kernel_initializer=initializer)
-                return tf.multiply(dep_input, pi), dep_input
+                # dep_input = tf.layers.dense(inputs,
+                #                             shape,
+                #                             activation=tf.sigmoid,
+                #                             kernel_initializer=initializer)
+
+                W = tf.get_variable(
+                    name='ctrl_weights',
+                    shape=[inputs.shape[-1].value, shape],
+                    initializer=initializer,
+                    trainable=True)
+                b = tf.get_variable(
+                    name='ctrl_bias',
+                    shape=[shape],
+                    initializer=tf.zeros_initializer(),
+                    trainable=True)
+                dep_input = tf.sigmoid(tf.matmul(inputs, W) + b)
+
+                if inference:
+                    dep_sample = dep_input
+                else:
+                    # dep_sample = relaxed_bern(0.01, dep_input, [tile_shape*context.sample_size, shape])
+                    dep_sample = dep_input
+
+
+                # weights = tf.get_default_graph().get_tensor_by_name(
+                #     os.path.split(dep_input.name)[0] + '/kernel:0')
+                # bias = tf.get_default_graph().get_tensor_by_name(
+                #     os.path.split(dep_input.name)[0] + '/bias:0')
+
+                tf.add_to_collection(
+                    name='ctrl_weights',
+                    value=W)
+                tf.add_to_collection(
+                    name='ctrl_bias',
+                    value=b)
+
+                return tf.multiply(dep_sample, 1), dep_sample
 
         dep_pi = tf.make_template('dependent_pi', dependent_pi)
 
-        new_pi, dep_input = dep_pi(flat_inputs, pi_batch)
+        new_pi, dep_input = dep_pi(flat_inputs, pi_batch, False)
 
         tf.add_to_collection(
             name='dep_input',
@@ -395,7 +428,7 @@ def dep_variational_mask(
 
         elif context.mode == ModularMode.EVALUATION:
             test_pi = get_test_pi(a, b)
-            new_pi, dep_input = dep_pi(flat_inputs, test_pi)
+            new_pi, dep_input = dep_pi(flat_inputs, test_pi, True)
             selection = tf.where(new_pi>0.5,
                                 x=tf.ones_like(new_pi),
                                 y=tf.zeros_like(new_pi)
@@ -614,12 +647,22 @@ def modularize_variational(template, optimizer, dataset_size,
     eval = evaluation(template, data_indices, dataset_size)
     return m, eval
 
+
 def create_ema_opt():
     return tf.group(*tf.get_collection('ema'))
+
 
 def get_sparsity_level():
     return tf.get_collection('sparsity')
 
+
 def get_dep_input():
     return tf.get_collection('dep_input')
 
+
+def get_ctrl_bias():
+    return tf.get_collection('ctrl_bias')
+
+
+def get_ctrl_weights():
+    return tf.get_collection('ctrl_weights')

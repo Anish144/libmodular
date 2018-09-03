@@ -22,6 +22,16 @@ beta_bern = sys.argv[5]
 beta = 1
 
 
+def fix_image_summary(list_op, op, module_count):
+    list_op.append(
+        tf.cast(
+            tf.reshape(
+                op,
+                [1, -1, module_count, 1]),
+            tf.float32))
+    pass
+
+
 def create_sparse_summary(sparse_ops):
     def layer_sparsity(op):
         batch_sparse = tf.reduce_sum(op, axis=1) / (tf.cast((tf.shape(op)[1]),
@@ -167,25 +177,12 @@ def run():
                 print('Vanilla')
                 hidden, l, s = modular.modular_layer(
                     activation, modules, 3, context)
-            ctrl_logits.append(
-                tf.cast(
-                    tf.reshape(
-                        l,
-                        [1, -1, module_count, 1]),
-                    tf.float32))
-            s_log.append(
-                tf.cast(
-                    tf.reshape(
-                        s,
-                        [1, -1, module_count, 1]),
-                    tf.float32))
+
+            fix_image_summary(ctrl_logits, l, module_count)
+            fix_image_summary(s_log, s, module_count)
+            fix_image_summary(bs_perst_log, bs, module_count)
             pi_log.append(pi)
-            bs_perst_log.append(
-                tf.cast(
-                    tf.reshape(
-                        bs,
-                        [1, -1, module_count, 1]),
-                    tf.float32))
+
             pooled = tf.nn.max_pool(
                 hidden,
                 ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1],
@@ -204,25 +201,10 @@ def run():
                 flattened, modules, context, 0.001, tf.shape(inputs_tr)[0])
             flattened = modular.batch_norm(flattened)
 
-            ctrl_logits.append(
-                tf.cast(
-                    tf.reshape(
-                        l,
-                        [1, -1, module_count, 1]),
-                    tf.float32))
-            s_log.append(
-                tf.cast(
-                    tf.reshape(
-                        s,
-                        [1, -1, module_count, 1]),
-                    tf.float32))
+            fix_image_summary(ctrl_logits, l, module_count)
+            fix_image_summary(s_log, s, module_count)
+            fix_image_summary(bs_perst_log, bs, module_count)
             pi_log.append(pi)
-            bs_perst_log.append(
-                tf.cast(
-                    tf.reshape(
-                        bs,
-                        [1, -1, module_count, 1]),
-                    tf.float32))
 
         logits = tf.layers.dense(flattened, units=10)
 
@@ -312,13 +294,13 @@ def run():
 
         if REALRUN == 'True':
             test_writer = tf.summary.FileWriter(
-                f('logs/test:Cifar10_variational_mask:a:3.5_b:0.5_'
-                    'alpha:0.01_samples:2_epochlim:10_anneal:5_'
-                    'filter:32,64,128_Indep_NO_WARM_UP_{time}'), sess.graph)
+                (f'logs/test:Cifar10_variational_mask:a:3.5_b:0.5_'
+                    f'alpha:0.1_samples:2_epochlim:10_anneal:5_'
+                    f'filter:32,64,128_Indep_NON_MODULAR_{time}'), sess.graph)
             writer = tf.summary.FileWriter(
-                f('logs/train:Cifar10_variational_mask:a:3.5_b:0.5_'
-                    'alpha:0.01_samples:2_epochlim:10_anneal:5_'
-                    'filter:32,64,128_Indep_NO_WARM_UP_{time}'), sess.graph)
+                (f'logs/train:Cifar10_variational_mask:a:3.5_b:0.5_'
+                    f'alpha:0.1_samples:2_epochlim:10_anneal:5_'
+                    f'filter:32,64,128_Indep_NON_MODULAR_{time}'), sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge(

@@ -439,8 +439,8 @@ def m_step(
 
         damp = get_damper(iteration, get_damp_list(epoch_lim))
 
-        KL = context.get_variational_kl(0.01, beta)
-        mod_KL = tf.reduce_sum((1.) * (1/num_batches) * KL)
+        KL = context.get_variational_kl(0.1, beta)
+        mod_KL = tf.reduce_sum((damp) * (1/num_batches) * KL)
 
         joint_objective = - (loglikelihood - mod_KL)
 
@@ -459,14 +459,23 @@ def m_step(
         tf.add_to_collection(name='KL',
                             value=KL)
 
+
+    # optimizer_2 = tf.train.AdamOptimizer(learning_rate=0.3)
+
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(update_ops):
+        # opt_2 = optimizer_2.minimize(
+        #     joint_objective,
+        #     var_list=tf.get_collection('ctrl_params'))
         opt = optimizer.minimize(joint_objective)
+
 
     return opt
 
+
 def get_damper(iteration, damp_list):
     return tf.slice(damp_list, [tf.cast(iteration, tf.int32)], [1])
+
 
 def get_damp_list(epoch_lim):
     iteration = tf.cast(tf.range(5), tf.float32)
@@ -475,9 +484,11 @@ def get_damp_list(epoch_lim):
     anneal = tf.reverse(damp, axis=[0])
     return tf.concat([tf.zeros(epoch_lim-5), anneal], 0)
 
+
 def evaluation(template, data_indices, dataset_size):
     context = ModularContext(ModularMode.EVALUATION, data_indices, dataset_size)
     return template(context)
+
 
 def get_unique_modules(selection):
     ones = tf.equal(1.,selection)
@@ -492,11 +503,14 @@ def get_unique_modules(selection):
 def create_m_step_summaries():
     return tf.summary.merge_all(key=M_STEP_SUMMARIES)
 
+
 def get_tensor_op():
     return tf.get_collection('mod_KL')
 
+
 def get_op():
     return tf.get_collection('Damp')
+
 
 def get_KL():
     return tf.get_collection('KL')
