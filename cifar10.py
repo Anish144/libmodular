@@ -63,12 +63,13 @@ def run():
         activation = inputs_tr
         logit=[]
         bs_list = []
-        for j in range(2):
+        parallel = [3,3,1]
+        for j in range(len(parallel)):
             input_channels = activation.shape[-1]
             filter_shape = [3, 3, input_channels, 8]
             modules = modular.create_conv_modules(filter_shape, module_count, strides=[1, 2, 2, 1])
             if not masked_bernoulli:
-                hidden, l, bs = modular.modular_layer(activation, modules, parallel_count=1, context=context)
+                hidden, l, bs = modular.modular_layer(activation, modules, parallel_count=parallel[j], context=context)
                 l = tf.reshape(tf.cast(tf.nn.softmax(l), tf.float32), [1,-1,module_count,1])
                 logit.append(l)
                 bs = tf.reshape(tf.cast(bs, tf.float32), [1,-1,module_count,1])
@@ -112,8 +113,8 @@ def run():
     config.gpu_options.allow_growth = True
     with tf.Session(config=config) as sess:
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
-        writer = tf.summary.FileWriter(f'logs/train_5m_withsummary_EM_VIT_2layer_1parallel_random_inference_{time}', sess.graph)
-        test_writer = tf.summary.FileWriter(f'logs/test_5m_withsummary_EM_VIT_2layer_1parallel_random_inference_{time}', sess.graph)
+        writer = tf.summary.FileWriter(f'logs/train_5m_withsummary_EM_VIT_3layer_parallel:3,3,1_{time}', sess.graph)
+        test_writer = tf.summary.FileWriter(f'logs/test_5m_withsummary_EM_VIT_3layer_parallel:3,3,1_{time}', sess.graph)
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
         sess.run(tf.global_variables_initializer())
@@ -133,7 +134,7 @@ def run():
             step = e_step if i % 50 == 0 else m_step
 
             # Sometimes generate summaries
-            if i % 50 == 0:
+            if i % 100 == 0:
                 summaries = m_step_summaries if step == m_step else general_summaries
                 _, summary_data = sess.run([step, summaries], train_dict)
                 writer.add_summary(summary_data, global_step=i) 
