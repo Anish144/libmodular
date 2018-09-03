@@ -139,7 +139,7 @@ def run():
         pi_log = []
         bs_perst_log = []
 
-        modules_list = [64, 64, 128, 128, 128, 512, 512, 512, 512]
+        modules_list = [64, 64, 128, 128, 128, 512, 512]
         for l in range(len(modules_list)):
             input_channels = activation.shape[-1]
             module_count = modules_list[l]
@@ -306,11 +306,11 @@ def run():
             test_writer = tf.summary.FileWriter(
                 (f'logs/test:Cifar10_variational_mask:a:3.5_b:0.5_'
                     f'alpha:0.1_samples:2_epochlim:10_anneal:5_'
-                    f'filter:64,64,128,128,512,512,512,512,modular512_Dep_BIGBIGBIGBIG_{time}'), sess.graph)
+                    f'filter:64,64,128,128,512,512,modular512_Dep_BIGBIGBIGBIG_{time}'), sess.graph)
             writer = tf.summary.FileWriter(
                 (f'logs/train:Cifar10_variational_mask:a:3.5_b:0.5_'
                     f'alpha:0.1_samples:2_epochlim:10_anneal:5_'
-                    f'filter:64,64,128,128,512,512,512,512,modular512_Dep_BIGBIGBIGBIG_{time}'), sess.graph)
+                    f'filter:64,64,128,128,512,512,modular512_Dep_BIGBIGBIGBIG_{time}'), sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge(
