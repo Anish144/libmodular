@@ -38,7 +38,7 @@ class ModularContext:
         def layer_entropy(layer):
             probs = tf.reduce_mean(layer.controller.probs, axis=0)
             return -tf.reduce_sum(probs * tf.log(probs + 1e-30), axis=-1)
-        return tf.reduce_mean([layer_entropy(layer) for layer in self.layers])
+        return tf.divide(tf.reduce_sum([tf.reduce_sum(layer_entropy(layer)) for layer in self.layers]), tf.constant(len(self.layers), tf.float32))
 
     # def selection_logprob(self):
     #     def layer_logprob(layer):

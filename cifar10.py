@@ -5,9 +5,12 @@ import numpy as np
 import libmodular as modular
 import observations
 from tqdm import tqdm
-
+import sys
 from libmodular.modular import create_m_step_summaries, M_STEP_SUMMARIES
 
+p1 = sys.argv[1]
+p2 = sys.argv[2]
+p3 = sys.argv[3]
 
 def create_summary(list_of_ops_or_op, name, summary_type):
     summary = getattr(tf.summary, summary_type)
@@ -63,7 +66,7 @@ def run():
         activation = inputs_tr
         logit=[]
         bs_list = []
-        parallel = [3,3,1]
+        parallel = [int(p1), int(p2), int(p3)]
         for j in range(len(parallel)):
             input_channels = activation.shape[-1]
             filter_shape = [3, 3, input_channels, 8]
@@ -113,8 +116,14 @@ def run():
     config.gpu_options.allow_growth = True
     with tf.Session(config=config) as sess:
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
-        writer = tf.summary.FileWriter(f'logs/train_5m_withsummary_EM_VIT_3layer_parallel:3,3,1_{time}', sess.graph)
-        test_writer = tf.summary.FileWriter(f'logs/test_5m_withsummary_EM_VIT_3layer_parallel:3,3,1_{time}', sess.graph)
+        writer = tf.summary.FileWriter(
+            (f'logs/train_5m_withsummary_EM_VIT_3layer_parallel:' 
+            + p1 + p2 + p3  + f'_{time}'),
+            sess.graph)
+        test_writer = tf.summary.FileWriter(
+            (f'logs/test_5m_withsummary_EM_VIT_3layer_parallel:' 
+            + p1 + p2 + p3   + f'_{time}'),
+            sess.graph)
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
         sess.run(tf.global_variables_initializer())
