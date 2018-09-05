@@ -153,11 +153,12 @@ def run():
         #         shape=filter_shape,
         #         strides=[1, 1, 1, 1])
 
-        modules_list = [32, 64, 128]
+        modules_list = [32, 16, 32]
+        filter_sizes = [1, 4, 4]
         for j in range(len(modules_list)):
             input_channels = activation.shape[-1]
             module_count = modules_list[j] 
-            filter_shape = [3, 3, input_channels, 1]
+            filter_shape = [3, 3, input_channels, filter_sizes[j]]
             modules = modular.create_conv_modules(filter_shape,
                                                   module_count,
                                                   strides=[1, 1, 1, 1])
@@ -311,14 +312,14 @@ def run():
         if REALRUN == 'True':
             test_writer = tf.summary.FileWriter(
                 (f'logs/test:Cifar10_variational_mask:a:3.5_b:0.5_'
-                 f'alpha:0.1_samples:2_epochlim:10_anneal:5_'
-                 f'filter:32,64,128_'
-                 f'Dep_Changed_inference_{time}'), sess.graph)
+                 f'alpha:0.1_samples:2_epochlim:6_anneal:5_'
+                 f'filter:32,16,32_'
+                 f'1,4,4filter_modules_{time}'), sess.graph)
             writer = tf.summary.FileWriter(
                 (f'logs/train:Cifar10_variational_mask:a:3.5_b:0.5_'
-                 f'alpha:0.1_samples:2_epochlim:10_anneal:5_'
-                 f'filter:32,64,128_'
-                 f'Dep_Changed_inference_{time}'), sess.graph)
+                 f'alpha:0.1_samples:2_epochlim:6_anneal:5_'
+                 f'filter:32,16,32_'
+                 f'1,4,4filter_modules_{time}'), sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge(

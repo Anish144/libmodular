@@ -531,7 +531,11 @@ def dep_variational_mask(
             less_2 = tf.less(iteration, tf.constant(20000.))
             cond_2 = tf.logical_and(great_2, less_2)
 
-            cond = tf.logical_or(cond_1, cond_2)
+            great_3 = tf.greater(iteration, tf.constant(35000.))
+            less_3 = tf.less(iteration, tf.constant(45000.))
+            cond_3 = tf.logical_and(great_3, less_3)
+
+            cond = tf.logical_or(tf.logical_or(cond_1, cond_2), cond_3)
 
             final_selection, selection = tf.cond(cond,
                                                  after_ind,
