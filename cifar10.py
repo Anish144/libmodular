@@ -121,7 +121,7 @@ def run():
 
     masked_bernoulli = False
     sample_size = 2
-    epoch_lim = 15.
+    epoch_lim = 10.
 
     iteration_number = tf.placeholder(
         dtype=tf.float32,
@@ -139,20 +139,20 @@ def run():
         pi_log = []
         bs_perst_log = []
 
-        modules_list = [64, 64, 128, 128, 128, 512, 512]
-        for l in range(len(modules_list)):
-            input_channels = activation.shape[-1]
-            module_count = modules_list[l]
-            filter_shape = [3, 3, input_channels, module_count]
-            activation = modular.conv_layer(
-                activation,
-                shape=filter_shape,
-                strides=[1, 1, 1, 1])
+        # modules_list = [64, 64, 128, 128, 128, 512, 512]
+        # for l in range(len(modules_list)):
+        #     input_channels = activation.shape[-1]
+        #     module_count = modules_list[l]
+        #     filter_shape = [3, 3, input_channels, module_count]
+        #     activation = modular.conv_layer(
+        #         activation,
+        #         shape=filter_shape,
+        #         strides=[1, 1, 1, 1])
 
-        modules_list = [512]
+        modules_list = [32, 64, 128]
         for j in range(len(modules_list)):
             input_channels = activation.shape[-1]
-            module_count = modules_list[j]
+            module_count = modules_list[j] 
             filter_shape = [3, 3, input_channels, 1]
             modules = modular.create_conv_modules(filter_shape,
                                                   module_count,
@@ -166,7 +166,7 @@ def run():
 
             elif variational == 'True':
                 print('Variational')
-                hidden, l, s, pi, bs = modular.dep_variational_mask(
+                hidden, l, s, pi, bs = modular.variational_mask(
                     activation,
                     modules,
                     context,
@@ -201,20 +201,20 @@ def run():
 
         flattened = tf.layers.flatten(activation)
 
-        # modules_list = [8, 4]
-        # for i in range(len(modules_list)):
-        #     module_count = modules_list[i]
-        #     modules = modular.create_dense_modules(
-        #         flattened, module_count,
-        #         units=8, activation=tf.nn.relu)
-        #     flattened, l, s, pi, bs = modular.dep_variational_mask(
-        #         flattened, modules, context, 0.001, tf.shape(inputs_tr)[0])
-        #     flattened = modular.batch_norm(flattened)
+        modules_list = [8, 4]
+        for i in range(len(modules_list)):
+            module_count = modules_list[i]
+            modules = modular.create_dense_modules(
+                flattened, module_count,
+                units=8, activation=tf.nn.relu)
+            flattened, l, s, pi, bs = modular.variational_mask(
+                flattened, modules, context, 0.001, tf.shape(inputs_tr)[0])
+            flattened = modular.batch_norm(flattened)
 
-        #     fix_image_summary(ctrl_logits, l, module_count)
-        #     fix_image_summary(s_log, s, module_count)
-        #     fix_image_summary(bs_perst_log, bs, module_count)
-        #     pi_log.append(pi)
+            fix_image_summary(ctrl_logits, l, module_count)
+            fix_image_summary(s_log, s, module_count)
+            fix_image_summary(bs_perst_log, bs, module_count)
+            pi_log.append(pi)
 
         logits = tf.layers.dense(flattened, units=10)
 
@@ -305,12 +305,14 @@ def run():
         if REALRUN == 'True':
             test_writer = tf.summary.FileWriter(
                 (f'logs/test:Cifar10_variational_mask:a:3.5_b:0.5_'
-                    f'alpha:0.1_samples:2_epochlim:10_anneal:5_'
-                    f'filter:64,64,128,128,512,512,modular512_Dep_BIGBIGBIGBIG_{time}'), sess.graph)
+                 f'alpha:0.1_samples:2_epochlim:10_anneal:5_'
+                 f'filter:32,64,128_'
+                 f'Indep_learning_curve_run_{time}'), sess.graph)
             writer = tf.summary.FileWriter(
                 (f'logs/train:Cifar10_variational_mask:a:3.5_b:0.5_'
-                    f'alpha:0.1_samples:2_epochlim:10_anneal:5_'
-                    f'filter:64,64,128,128,512,512,modular512_Dep_BIGBIGBIGBIG_{time}'), sess.graph)
+                 f'alpha:0.1_samples:2_epochlim:10_anneal:5_'
+                 f'filter:32,64,128_'
+                 f'Indep_learning_curve_run_{time}'), sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge(
