@@ -121,12 +121,16 @@ def run():
 
     masked_bernoulli = False
     sample_size = 2
-    epoch_lim = 10.
+    epoch_lim = 6.
 
     iteration_number = tf.placeholder(
         dtype=tf.float32,
         shape=[],
         name='iteration_number')
+    iterate = tf.placeholder(
+        dtype=tf.float32,
+        shape=[],
+        name='iterate')
 
     def network(context: modular.ModularContext,
                 masked_bernoulli=False,
@@ -166,12 +170,13 @@ def run():
 
             elif variational == 'True':
                 print('Variational')
-                hidden, l, s, pi, bs = modular.variational_mask(
+                hidden, l, s, pi, bs = modular.dep_variational_mask(
                     activation,
                     modules,
                     context,
                     0.001,
-                    tf.shape(inputs_tr)[0])
+                    tf.shape(inputs_tr)[0],
+                    iterate)
                 hidden = modular.batch_norm(hidden)
 
             elif beta_bern == 'True':
@@ -207,8 +212,9 @@ def run():
             modules = modular.create_dense_modules(
                 flattened, module_count,
                 units=8, activation=tf.nn.relu)
-            flattened, l, s, pi, bs = modular.variational_mask(
-                flattened, modules, context, 0.001, tf.shape(inputs_tr)[0])
+            flattened, l, s, pi, bs = modular.dep_variational_mask(
+                flattened, modules, context, 0.001, tf.shape(inputs_tr)[0],
+                iterate)
             flattened = modular.batch_norm(flattened)
 
             fix_image_summary(ctrl_logits, l, module_count)
@@ -307,12 +313,12 @@ def run():
                 (f'logs/test:Cifar10_variational_mask:a:3.5_b:0.5_'
                  f'alpha:0.1_samples:2_epochlim:10_anneal:5_'
                  f'filter:32,64,128_'
-                 f'Indep_learning_curve_run_{time}'), sess.graph)
+                 f'Dep_Changed_inference_{time}'), sess.graph)
             writer = tf.summary.FileWriter(
                 (f'logs/train:Cifar10_variational_mask:a:3.5_b:0.5_'
                  f'alpha:0.1_samples:2_epochlim:10_anneal:5_'
                  f'filter:32,64,128_'
-                 f'Indep_learning_curve_run_{time}'), sess.graph)
+                 f'Dep_Changed_inference_{time}'), sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge(
@@ -332,6 +338,9 @@ def run():
             # Switch between E-step and M-step
             train_dict[iteration_number] = j_s
             test_dict[iteration_number] = j_s
+
+            train_dict[iterate] = i
+            test_dict[iterate] = i
 
             if variational or beta_bern == 'True':
                 step = m_step

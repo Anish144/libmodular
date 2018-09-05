@@ -401,7 +401,7 @@ def variational_mask(
 
 def dep_variational_mask(
     inputs, modules: ModulePool,
-    context: ModularContext, eps, tile_shape
+    context: ModularContext, eps, tile_shape, iteration
 ):
     """
     Constructs a Bernoulli masked layer that outputs sparse
@@ -440,7 +440,7 @@ def dep_variational_mask(
             pi_batch,
             [tile_shape * context.sample_size, shape])
 
-        initializer = tf.uniform_unit_scaling_initializer(factor=1.43)
+        initializer = tf.contrib.layers.xavier_initializer()
 
         def dependent_pi(inputs, pi, inference):
             with tf.variable_scope('dep_pi', reuse=tf.AUTO_REUSE):
@@ -501,16 +501,41 @@ def dep_variational_mask(
 
         elif context.mode == ModularMode.EVALUATION:
             test_pi = get_test_pi(a, b)
-            new_pi, dep_input = dep_pi(flat_inputs, test_pi, True)
-            selection = tf.where(new_pi > 0.5,
-                                 x=tf.ones_like(new_pi),
-                                 y=tf.zeros_like(new_pi)
-                                 )
-            final_selection = selection
-            # final_selection = tf.tile(
-            #     selection, [tf.shape(flat_inputs)[0]])
-            # final_selection = tf.reshape(
-            #     final_selection,[tf.shape(flat_inputs)[0], shape])
+
+            def before_cond():
+                new_pi, dep_input_sample = dep_pi(flat_inputs, test_pi, True)
+                selection = tf.where(new_pi>0.5,
+                                x=tf.ones_like(new_pi),
+                                y=tf.zeros_like(new_pi)
+                                )
+                final_selection = selection
+                return final_selection, selection
+
+            def after_ind():
+                selection = tf.where(test_pi>0.5,
+                                    x=tf.ones_like(test_pi),
+                                    y=tf.zeros_like(test_pi)
+                                    )
+                final_selection = selection
+                final_selection = tf.tile(
+                selection, [tf.shape(flat_inputs)[0]])
+                final_selection = tf.reshape(
+                final_selection,[tf.shape(flat_inputs)[0], shape])
+                return final_selection, selection
+
+            great_1 = tf.greater(iteration, tf.constant(6000.))
+            less_1 = tf.less(iteration, tf.constant(10000.))
+            cond_1 = tf.logical_and(great_1, less_1)
+
+            great_2 = tf.greater(iteration, tf.constant(15000.))
+            less_2 = tf.less(iteration, tf.constant(20000.))
+            cond_2 = tf.logical_and(great_2, less_2)
+
+            cond = tf.logical_or(cond_1, cond_2)
+
+            final_selection, selection = tf.cond(cond,
+                                                 after_ind,
+                                                 before_cond) 
 
             tf.add_to_collection(
                 name='sparsity',
