@@ -59,7 +59,7 @@ def run():
     inputs_tr = tf.transpose(inputs_cast, perm=(0, 2, 3, 1))
     labels_cast = tf.cast(labels, tf.int32)
 
-    module_count = 5
+    module_count = 3
 
     def network(context: modular.ModularContext, masked_bernoulli=False):
         # 4 modular CNN layers
