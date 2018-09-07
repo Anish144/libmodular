@@ -103,9 +103,10 @@ class ModularContext:
             lay_number
         ):
             ctrl = self.layers[lay_number].controller
-            return tf.distributions.kl_divergence(ctrl, regulariser)
+            kl = tf.distributions.kl_divergence(ctrl, regulariser)
+            return kl
         return tf.reduce_sum(
-            [get_layer_kl(i) for i in range(len(self.layers))])
+            [tf.reduce_sum(get_layer_kl(i)) for i in range(len(self.layers))])
 
     def get_variational_kl(self, alpha, beta):
         def get_layer_KL(number):
@@ -281,7 +282,7 @@ def run_masked_modules(inputs, selection, module_fnc, output_shape, ):
         return accum + tf.scatter_nd(
             indices, output, tf.cast(output_shape, tf.int64))
     output = tf.scan(
-        compute_module, used_modules, initializer=tf.zeros(output_shape))[-1]
+       compute_module, used_modules, initializer=tf.zeros(output_shape))[-1]
     # Want the last output of the scan fucntion
 
     return output
@@ -520,12 +521,15 @@ def m_step(
         damp = get_damper(iteration, get_damp_list(epoch_lim))
 
         KL = context.get_variational_kl(0.1, beta)
-        mod_KL = tf.reduce_sum((damp) * (1 / num_batches) * KL)
+        naive_kl = context.get_naive_kl()
 
-        joint_objective = - (loglikelihood - mod_KL)
+        mod_KL = tf.reduce_sum((damp) * (1 / num_batches) * KL)
+        mod_naive_kl = tf.reduce_sum((damp) * (1 / num_batches) * naive_kl)
+
+        joint_objective = - (loglikelihood - mod_KL - mod_naive_kl)
 
         tf.summary.scalar(
-            'KL', mod_KL, collections=[M_STEP_SUMMARIES])
+            'KL', mod_naive_kl, collections=[M_STEP_SUMMARIES])
         tf.summary.scalar(
             'ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
         module_objective = tf.reduce_sum(loglikelihood)
@@ -535,7 +539,7 @@ def m_step(
         tf.summary.scalar(
             'damp', tf.reduce_sum(damp), collections=[M_STEP_SUMMARIES])
         tf.summary.scalar(
-            'Real KL', tf.reduce_sum(KL), collections=[M_STEP_SUMMARIES])
+            'Real KL', tf.reduce_sum(naive_kl), collections=[M_STEP_SUMMARIES])
 
         tf.add_to_collection(name='mod_KL',
                              value=mod_KL)

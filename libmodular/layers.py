@@ -457,7 +457,7 @@ def dep_variational_mask(
                 b = tf.get_variable(
                     name='ctrl_bias',
                     shape=[shape],
-                    initializer=tf.zeros_initializer(),
+                    initializer=tf.ones_initializer(),
                     trainable=True)
                 dep_input = tf.sigmoid(tf.matmul(inputs, W) + b)
 
@@ -480,7 +480,7 @@ def dep_variational_mask(
                     name='ctrl_bias',
                     value=b)
 
-                return tf.multiply(dep_sample, pi), dep_sample
+                return tf.multiply(dep_sample, 1), dep_sample
 
         dep_pi = tf.make_template('dependent_pi', dependent_pi)
 
@@ -545,7 +545,7 @@ def dep_variational_mask(
                 name='sparsity',
                 value=final_selection)
 
-        pseudo_ctrl = tfd.Bernoulli(probs=pi)
+        pseudo_ctrl = tfd.Bernoulli(probs=pi_batch)
         attrs = ModularLayerAttributes(
             selection,
             None, pseudo_ctrl,
