@@ -480,7 +480,7 @@ def dep_variational_mask(
                     name='ctrl_bias',
                     value=b)
 
-                return tf.multiply(dep_sample, 1), dep_sample
+                return tf.multiply(dep_sample, pi), dep_sample
 
         dep_pi = tf.make_template('dependent_pi', dependent_pi)
 

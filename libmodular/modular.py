@@ -526,7 +526,7 @@ def m_step(
         mod_KL = tf.reduce_sum((damp) * (1 / num_batches) * KL)
         mod_naive_kl = tf.reduce_sum((damp) * (1 / num_batches) * naive_kl)
 
-        joint_objective = - (loglikelihood - mod_KL - mod_naive_kl)
+        joint_objective = - (loglikelihood - mod_KL)
 
         tf.summary.scalar(
             'KL', mod_naive_kl, collections=[M_STEP_SUMMARIES])

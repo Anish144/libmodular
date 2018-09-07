@@ -314,12 +314,12 @@ def run():
                 (f'logs/test:Cifar10_variational_mask:a:3.5_b:0.5_'
                  f'alpha:0.1_samples:2_epochlim:6_anneal:5_'
                  f'filter:32,16,32_'
-                 f'Naive_KL_try_{time}'), sess.graph)
+                 f'Final_{time}'), sess.graph)
             writer = tf.summary.FileWriter(
                 (f'logs/train:Cifar10_variational_mask:a:3.5_b:0.5_'
                  f'alpha:0.1_samples:2_epochlim:6_anneal:5_'
                  f'filter:32,16,32_'
-                 f'Naive_KL_try_{time}'), sess.graph)
+                 f'Final_{time}'), sess.graph)
 
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge(
