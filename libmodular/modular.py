@@ -565,11 +565,12 @@ def get_damper(iteration, damp_list):
 
 
 def get_damp_list(epoch_lim):
-    iteration = tf.cast(tf.range(5), tf.float32)
-    term_1 = (5 - iteration)
-    damp = term_1 / tf.constant(5., dtype=tf.float32)
+    damp_length = 3
+    iteration = tf.cast(tf.range(damp_length), tf.float32)
+    term_1 = (damp_length - iteration)
+    damp = term_1 / tf.constant(damp_length, dtype=tf.float32)
     anneal = tf.reverse(damp, axis=[0])
-    return tf.concat([tf.zeros(epoch_lim - 5), anneal], 0)
+    return tf.concat([tf.zeros(epoch_lim - damp_length), anneal], 0)
 
 
 def evaluation(template, data_indices, dataset_size):

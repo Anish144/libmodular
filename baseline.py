@@ -19,10 +19,12 @@ def make_handle(sess, dataset):
     handle, _ = sess.run([iterator.string_handle(), iterator.initializer])
     return handle
 
+
 def get_dataset(x, y, batch_size):
     data =  tf.data.Dataset.from_tensor_slices((x, y))
     prepare = data._enumerate().repeat().shuffle(50000)
     return prepare.batch(batch_size)
+
 
 def create_summary(list_of_ops_or_op, name, summary_type):
     summary = getattr(tf.summary, summary_type)
@@ -40,21 +42,34 @@ def create_summary(list_of_ops_or_op, name, summary_type):
 
 # noinspection PyProtectedMember
 def run():
-    # Load dataset
-    (x_train, y_train), (x_test, y_test) = observations.cifar10('~/data/cifar10')
-    y_test = y_test.astype(np.uint8)  # Fix test_data dtype
+     # Load dataset
+    (x_train_1, y_train_1), (x_test_1, y_test_1) = observations.cifar10(
+        '~/data/cifar10')
+    y_test_1 = y_test_1.astype(np.uint8)  # Fix test_data dtype
 
+    (x_train_2, y_train_2), (x_test_2, y_test_2) = observations.svhn(
+        '~/data/svhn')
+    y_test_2 = y_test_2.astype(np.uint8)  # Fix test_data dtype
+
+    # Preprocessing
+    x_train_1 = np.transpose(x_train_1, [0, 2, 3, 1])
+    x_test_1 = np.transpose(x_test_1, [0, 2, 3, 1])
+
+    x_train = np.concatenate([x_train_1, x_train_2])
+    y_train = np.concatenate([y_train_1, y_train_2])
+    x_test = np.concatenate([x_test_1, x_test_2])
+    y_test = np.concatenate([y_test_1, y_test_2])
 
     dataset_size = x_train.shape[0]
 
     batch_size = 100
-    num_batches = dataset_size/batch_size
+    num_batches = dataset_size / batch_size
 
     # Train dataset
     train = get_dataset(x_train, y_train, batch_size)
 
     # Test dataset
-    test_batch_size = 250
+    test_batch_size = 100
     test = get_dataset(x_test, y_test, test_batch_size)
 
     # Handle to switch between datasets
@@ -63,39 +78,31 @@ def run():
         handle, train.output_types, train.output_shapes)
     data_indices, (inputs, labels) = itr.get_next()
 
-    # Preprocessing
-    inputs_cast = tf.cast(inputs, tf.float32) / 255.0
-    inputs_tr = tf.transpose(inputs_cast, perm=(0, 2, 3, 1))
+    inputs_tr = tf.cast(inputs, tf.float32) / 255.0
     labels_cast = tf.cast(labels, tf.int32)
 
     def network():
         # 4 modular CNN layers
         activation = inputs_tr
 
-        # for js in range(1):
-        #     input_channels = activation.shape[-1]
-        #     filter_shape = [3, 3, input_channels, 8]
-        #     activation = modular.conv_layer(activation, filter_shape, strides=[1,1,1,1])
-
-        modules_list = [32, 64, 128]
+        modules_list = [8 * 4, 16 * 4, 32 * 4, 32 * 8]
         for j in range(len(modules_list)):
             input_channels = activation.shape[-1]
             module_count = modules_list[j]
             filter_shape = [3, 3, input_channels, modules_list[j]]
-            activation = modular.conv_layer(activation, filter_shape, strides=[1,1,1,1])
+            activation = modular.conv_layer(activation, 
+                                            filter_shape, 
+                                            strides=[1,1,1,1])
  
-
         flattened = tf.layers.flatten(activation)
 
-        modules_list = [8, 4]
-        units = 8
+        modules_list = [8, 4, 1]
+        units = 10
         for i in range(len(modules_list)):
             flattened = tf.layers.dense(flattened, modules_list[i]*units,
                                         activation=tf.nn.relu,
                                         kernel_initializer=tf.contrib.layers.xavier_initializer())
             flattened = modular.batch_norm(flattened)
-
-
 
         logits = tf.layers.dense(flattened, units=10)
 
@@ -106,7 +113,6 @@ def run():
         accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, target), tf.float32))
 
         return (loglikelihood, accuracy) 
-
 
     template = tf.make_template('network', network)
 
@@ -120,16 +126,14 @@ def run():
     create_summary(tf.reduce_mean(ll), 'loglikelihood', 'scalar')
     create_summary(accuracy, 'accuracy', 'scalar')
 
-
-
     with tf.Session() as sess:
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
 
         if REALRUN=='True':
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Cifar10_Baseline_{time}', sess.graph)
+                f'logs/test:Multitask_Baseline_{time}', sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Cifar10_Baseline_{time}', sess.graph)
+                f'logs/train:Multitask_Baseline_{time}', sess.graph)
 
         general_summaries = tf.summary.merge_all()
         sess.run(tf.global_variables_initializer())

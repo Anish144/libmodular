@@ -85,10 +85,10 @@ def conv_layer(x, shape, strides, padding='SAME'):
         biases = tf.get_variable(
             'biases', biases_shape, initializer=tf.zeros_initializer())
         hidden = tf.nn.conv2d(x, filter, strides, padding) + biases
-        hidden = batch_norm(hidden)
         pooled = tf.nn.max_pool(
             hidden, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
-        return tf.nn.relu(pooled)
+        relu = tf.nn.relu(pooled)
+        return batch_norm(relu)
 
 
 def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
