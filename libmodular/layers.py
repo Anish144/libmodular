@@ -401,7 +401,8 @@ def variational_mask(
 
 def dep_variational_mask(
     inputs, modules: ModulePool,
-    context: ModularContext, eps, tile_shape, iteration
+    context: ModularContext, tile_shape, iteration,
+    a_init, b_init
 ):
     """
     Constructs a Bernoulli masked layer that outputs sparse
@@ -426,11 +427,11 @@ def dep_variational_mask(
         a = tf.maximum(tf.get_variable(name='a',
                        dtype=tf.float32,
                        initializer=tf.random_uniform(
-                           [shape], minval=3.5, maxval=3.5)), 1e-20)
+                           [shape], minval=a_init[0], maxval=a_init[1])), 1e-20)
         b = tf.maximum(tf.get_variable(name='b',
                        dtype=tf.float32,
                        initializer=tf.random_uniform(
-                           [shape], minval=0.3, maxval=0.3)), 1e-20)
+                           [shape], minval=b_init[0], maxval=b_init[1])), 1e-20)
 
         pi = get_pi(a, b, u_shape)
         pi_batch = tf.expand_dims(pi, 1)
@@ -442,12 +443,8 @@ def dep_variational_mask(
 
         initializer = tf.contrib.layers.xavier_initializer()
 
-        def dependent_pi(inputs, pi, inference):
+        def dependent_pi(inputs, pi):
             with tf.variable_scope('dep_pi', reuse=tf.AUTO_REUSE):
-                # dep_input = tf.layers.dense(inputs,
-                #                             shape,
-                #                             activation=tf.sigmoid,
-                #                             kernel_initializer=initializer)
 
                 W = tf.get_variable(
                     name='ctrl_weights',
@@ -461,18 +458,6 @@ def dep_variational_mask(
                     trainable=True)
                 dep_input = tf.sigmoid(tf.matmul(inputs, W) + b)
 
-                if inference:
-                    dep_sample = dep_input
-                else:
-                    # dep_sample = relaxed_bern(0.01, dep_input,
-                    #   [tile_shape * context.sample_size, shape])
-                    dep_sample = dep_input
-
-                # weights = tf.get_default_graph().get_tensor_by_name(
-                #     os.path.split(dep_input.name)[0] + '/kernel:0')
-                # bias = tf.get_default_graph().get_tensor_by_name(
-                #     os.path.split(dep_input.name)[0] + '/bias:0')
-
                 tf.add_to_collection(
                     name='ctrl_weights',
                     value=W)
@@ -480,11 +465,11 @@ def dep_variational_mask(
                     name='ctrl_bias',
                     value=b)
 
-                return tf.multiply(dep_sample, pi), dep_sample
+                return tf.multiply(dep_input, pi), dep_input
 
         dep_pi = tf.make_template('dependent_pi', dependent_pi)
 
-        new_pi, dep_input = dep_pi(flat_inputs, pi_batch, False)
+        new_pi, dep_input = dep_pi(flat_inputs, pi_batch)
 
         tf.add_to_collection(
             name='dep_input',
@@ -503,7 +488,7 @@ def dep_variational_mask(
             test_pi = get_test_pi(a, b)
 
             def before_cond():
-                new_pi, dep_input_sample = dep_pi(flat_inputs, test_pi, True)
+                new_pi, dep_input_sample = dep_pi(flat_inputs, test_pi)
                 selection = tf.where(new_pi>0.5,
                                 x=tf.ones_like(new_pi),
                                 y=tf.zeros_like(new_pi)
@@ -545,10 +530,9 @@ def dep_variational_mask(
                 name='sparsity',
                 value=final_selection)
 
-        pseudo_ctrl = tfd.Bernoulli(probs=pi_batch)
         attrs = ModularLayerAttributes(
             selection,
-            None, pseudo_ctrl,
+            None, None,
             a, b, pi, None, None,
             None, None, None)
         context.layers.append(attrs)
@@ -583,14 +567,6 @@ def dep_variational_mask(
                 new_biases),
                 new_pi, selection, test_pi, dep_input)
 
-        # return (run_non_modular(inputs,
-        #                     final_selection,
-        #                     z,
-        #                     shape,
-        #                     modules.units,
-        #                     modules.module_fnc,
-        #                     modules.output_shape),
-        #                 pi, selection, test_pi, test_pi)
 
 
 def beta_bernoulli(
@@ -764,12 +740,13 @@ def modularize(template, optimizer, dataset_size, data_indices,
 
 def modularize_variational(
     template, optimizer, dataset_size,
-    data_indices, variational, num_batches, beta,
-    sample_size, iteration, epoch_lim
+    data_indices, variational, num_batches,
+    sample_size, iteration, epoch_lim, damp_length,
+    alpha
 ):
     m = m_step(template, optimizer, dataset_size, data_indices,
                variational, num_batches,
-               beta, sample_size, iteration, epoch_lim)
+               sample_size, iteration, epoch_lim, damp_length, alpha)
     eval = evaluation(template, data_indices, dataset_size)
     return m, eval
 

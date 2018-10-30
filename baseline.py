@@ -85,7 +85,7 @@ def run():
         # 4 modular CNN layers
         activation = inputs_tr
 
-        modules_list = [8 * 4, 16 * 4, 32 * 4, 32 * 8]
+        modules_list = [32 * 1, 64 * 1, 128 * 1]
         for j in range(len(modules_list)):
             input_channels = activation.shape[-1]
             module_count = modules_list[j]
@@ -96,8 +96,8 @@ def run():
  
         flattened = tf.layers.flatten(activation)
 
-        modules_list = [8, 4, 1]
-        units = 10
+        modules_list = [8, 4]
+        units = 8
         for i in range(len(modules_list)):
             flattened = tf.layers.dense(flattened, modules_list[i]*units,
                                         activation=tf.nn.relu,
@@ -131,9 +131,11 @@ def run():
 
         if REALRUN=='True':
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Multitask_Baseline_{time}', sess.graph)
+                f'logs/test:Multitask_Baseline_single_filter_modules_{time}',
+                sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Multitask_Baseline_{time}', sess.graph)
+                f'logs/train:Multitask_Baseline_single_filter_modules_{time}',
+                sess.graph)
 
         general_summaries = tf.summary.merge_all()
         sess.run(tf.global_variables_initializer())

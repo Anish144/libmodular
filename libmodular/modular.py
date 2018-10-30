@@ -108,7 +108,7 @@ class ModularContext:
         return tf.reduce_sum(
             [tf.reduce_sum(get_layer_kl(i)) for i in range(len(self.layers))])
 
-    def get_variational_kl(self, alpha, beta):
+    def get_variational_kl(self, alpha):
         def get_layer_KL(number):
             a = self.layers[number].a
             b = self.layers[number].b
@@ -118,7 +118,7 @@ class ModularContext:
             term_bracket = (
                 tf.digamma(1.) - tf.digamma(b) - tf.divide(1., b + 1e-20))
             term_3 = tf.multiply(tf.divide(a - alpha, a + 1e-20), term_bracket)
-            return (beta) * tf.reduce_sum(term_1 + term_2 + term_3)
+            return tf.reduce_sum(term_1 + term_2 + term_3)
         return tf.reduce_sum(
             [get_layer_KL(i) for i in range(len(self.layers))])
 
@@ -488,7 +488,8 @@ def e_step(template, sample_size, dataset_size, data_indices):
 def m_step(
     template, optimizer, dataset_size,
     data_indices, variational,
-    num_batches, beta, sample_size, iteration, epoch_lim
+    num_batches, sample_size, iteration, epoch_lim,
+    damp_length, alpha
 ):
 
     context = ModularContext(
@@ -518,18 +519,16 @@ def m_step(
         print('VAR')
         loglikelihood = template(context)[0]
 
-        damp = get_damper(iteration, get_damp_list(epoch_lim))
+        damp = get_damper(iteration, get_damp_list(epoch_lim, damp_length))
 
-        KL = context.get_variational_kl(0.1, beta)
-        naive_kl = context.get_naive_kl()
+        KL = context.get_variational_kl(alpha)
 
         mod_KL = tf.reduce_sum((damp) * (1 / num_batches) * KL)
-        mod_naive_kl = tf.reduce_sum((damp) * (1 / num_batches) * naive_kl)
 
         joint_objective = - (loglikelihood - mod_KL)
 
         tf.summary.scalar(
-            'KL', mod_naive_kl, collections=[M_STEP_SUMMARIES])
+            'KL', mod_KL, collections=[M_STEP_SUMMARIES])
         tf.summary.scalar(
             'ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
         module_objective = tf.reduce_sum(loglikelihood)
@@ -539,7 +538,7 @@ def m_step(
         tf.summary.scalar(
             'damp', tf.reduce_sum(damp), collections=[M_STEP_SUMMARIES])
         tf.summary.scalar(
-            'Real KL', tf.reduce_sum(naive_kl), collections=[M_STEP_SUMMARIES])
+            'Real KL', tf.reduce_sum(KL), collections=[M_STEP_SUMMARIES])
 
         tf.add_to_collection(name='mod_KL',
                              value=mod_KL)
@@ -564,8 +563,7 @@ def get_damper(iteration, damp_list):
     return tf.slice(damp_list, [tf.cast(iteration, tf.int32)], [1])
 
 
-def get_damp_list(epoch_lim):
-    damp_length = 3
+def get_damp_list(epoch_lim, damp_length):
     iteration = tf.cast(tf.range(damp_length), tf.float32)
     term_1 = (damp_length - iteration)
     damp = term_1 / tf.constant(damp_length, dtype=tf.float32)
