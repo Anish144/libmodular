@@ -18,11 +18,11 @@ REALRUN = sys.argv[1]
 variational = sys.argv[2]
 
 arguments = {
-    'name': 'Multitask',
+    'name': 'Function_mixture_cnn_ctrl',
     'batch_size': 100,
     'test_batch_size': 100,
-    'cnn_module_list': [32, 64, 128],
-    'cnn_filter_size': [1, 1, 1],
+    'cnn_module_list': [4, 4, 4, 4, 4, 4],
+    'cnn_filter_size': [4, 8, 16, 32, 64, 128],
     'linear_module_list': [8, 4],
     'linear_units': 8,
     'a_init_range': [3.5, 3.5],
@@ -31,6 +31,9 @@ arguments = {
     'epoch_lim': 6,
     'damp_length': 3,
     'alpha': 0.1,
+    'output_add': True,
+    'Datasets': ['cifar10'],
+    'cnn_ctrl': True
 }
 
 
@@ -46,9 +49,13 @@ def fix_image_summary(list_op, op, module_count):
 
 def create_sparse_summary(sparse_ops):
     def layer_sparsity(op):
+        layer_count = sparse_ops.index(op)
         batch_sparse = tf.reduce_sum(op, axis=1) / (tf.cast((tf.shape(op)[1]),
                                                             tf.float32))
-        return tf.reduce_mean(batch_sparse)
+        layer_sparse = tf.reduce_mean(batch_sparse)
+        create_summary(
+            layer_sparse, 'layer_{}_sparsity'.format(layer_count), 'scalar')
+        return layer_sparse
     sparse_model = tf.reduce_mean([layer_sparsity(op) for op in sparse_ops])
     create_summary(sparse_model, 'Sparsity ratio', 'scalar')
 
@@ -107,22 +114,29 @@ def run():
     No args.
     """
     # Load dataset
-    (x_train_1, y_train_1), (x_test_1, y_test_1) = observations.cifar10(
-        '~/data/cifar10')
-    y_test_1 = y_test_1.astype(np.uint8)  # Fix test_data dtype
 
-    (x_train_2, y_train_2), (x_test_2, y_test_2) = observations.svhn(
-        '~/data/svhn')
-    y_test_2 = y_test_2.astype(np.uint8)  # Fix test_data dtype
+    x_train_full = []
+    x_test_full = []
+    y_train_full = []
+    y_test_full = []
 
-    # Preprocessing
-    x_train_1 = np.transpose(x_train_1, [0, 2, 3, 1])
-    x_test_1 = np.transpose(x_test_1, [0, 2, 3, 1])
+    for dataset in arguments['Datasets']:
+        pull_dataset = getattr(observations, dataset)
+        (x_train, y_train), (x_test, y_test) = pull_dataset(
+            '~/data/{}'.format(dataset))
+        y_test = y_test.astype(np.uint8)
+        if dataset == 'cifar10':
+            x_train = np.transpose(x_train, [0, 2, 3, 1])
+            x_test = np.transpose(x_test, [0, 2, 3, 1])
+        x_train_full.append(x_train)
+        x_test_full.append(x_test)
+        y_train_full.append(y_train)
+        y_test_full.append(y_test)
 
-    x_train = np.concatenate([x_train_1, x_train_2])
-    y_train = np.concatenate([y_train_1, y_train_2])
-    x_test = np.concatenate([x_test_1, x_test_2])
-    y_test = np.concatenate([y_test_1, y_test_2])
+    x_train = np.vstack(x_train_full)
+    x_test = np.vstack(x_test_full)
+    y_train = np.vstack(y_train_full)[0,:]
+    y_test = np.vstack(y_test_full)[0,:]
 
     dataset_size = x_train.shape[0]
 
@@ -180,7 +194,9 @@ def run():
                     tile_shape=tf.shape(inputs_tr)[0],
                     iteration=iterate,
                     a_init=arguments['a_init_range'],
-                    b_init=arguments['b_init_range'])
+                    b_init=arguments['b_init_range'],
+                    output_add=arguments['output_add'],
+                    cnn_ctrl=arguments['cnn_ctrl'])
 
             else:
                 print('Vanilla')
@@ -196,8 +212,7 @@ def run():
                 hidden,
                 ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1],
                 padding='SAME')
-            activation = tf.nn.relu(pooled)
-            activation = modular.batch_norm(activation)
+            activation = modular.batch_norm(pooled)
 
         flattened = tf.layers.flatten(activation)
 
@@ -206,11 +221,20 @@ def run():
             print('Linear')
             module_count = arguments['linear_module_list'][i]
             modules = modular.create_dense_modules(
-                flattened, module_count,
-                units=arguments['linear_units'], activation=tf.nn.relu)
+                flattened, 
+                module_count,
+                units=arguments['linear_units'])
             flattened, l, s, pi, bs = modular.dep_variational_mask(
-                flattened, modules, context, tf.shape(inputs_tr)[0],
-                iterate, arguments['a_init_range'], arguments['b_init_range'])
+                inputs=flattened,
+                modules=modules,
+                context=context,
+                tile_shape=tf.shape(inputs_tr)[0],
+                iteration=iterate,
+                a_init=arguments['a_init_range'],
+                b_init=arguments['b_init_range'],
+                output_add=arguments['output_add'],
+                cnn_ctrl=False)
+
             flattened = modular.batch_norm(flattened)
 
             fix_image_summary(ctrl_logits, l, module_count)
@@ -309,7 +333,7 @@ def run():
                 (f'logs/test:'
                  'name:{}_'.format(arguments['name']) +
                  'alpha:{}_'.format(arguments['alpha']) +
-                 'samples:.{}_'.format(arguments['samples']) +
+                 'samples:.{}_'.format(arguments['sample_size']) +
                  'epoch_lim:{}_'.format(arguments['epoch_lim']) +
                  'damp_length:{}_'.format(arguments['damp_length']) +
                  'a:{}_'.format(arguments['a_init_range']) +
@@ -322,7 +346,7 @@ def run():
                 (f'logs/train:'
                  'name:{}_'.format(arguments['name']) +
                  'alpha:{}_'.format(arguments['alpha']) +
-                 'samples:.{}_'.format(arguments['samples']) +
+                 'samples:.{}_'.format(arguments['sample_size']) +
                  'epoch_lim:{}_'.format(arguments['epoch_lim']) +
                  'damp_length:{}_'.format(arguments['damp_length']) +
                  'a:{}_'.format(arguments['a_init_range']) +

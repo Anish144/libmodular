@@ -402,7 +402,7 @@ def variational_mask(
 def dep_variational_mask(
     inputs, modules: ModulePool,
     context: ModularContext, tile_shape, iteration,
-    a_init, b_init
+    a_init, b_init, output_add, cnn_ctrl
 ):
     """
     Constructs a Bernoulli masked layer that outputs sparse
@@ -415,13 +415,16 @@ def dep_variational_mask(
         eps; threshold for dependent pi
     """
     with tf.variable_scope(None, 'dep_variational_mask'):
+        new_inputs = tf.stop_gradient(inputs)
 
-        inputs = context.begin_modular(inputs)
-        flat_inputs = tf.stop_gradient(tf.layers.flatten(inputs))
-        input_shape = flat_inputs.shape[-1].value
+        if output_add:
+            function = run_masked_modules_withloop
+        else:
+            function = run_masked_modules_withloop_and_concat
+
+        new_inputs = context.begin_modular(new_inputs)
 
         shape = modules.module_count
-        input_shape = flat_inputs.shape[-1].value
         u_shape = [context.sample_size, shape]
 
         a = tf.maximum(tf.get_variable(name='a',
@@ -443,12 +446,20 @@ def dep_variational_mask(
 
         initializer = tf.contrib.layers.xavier_initializer()
 
-        def dependent_pi(inputs, pi):
+        def dependent_pi(inputs, pi, cnn_ctrl):
             with tf.variable_scope('dep_pi', reuse=tf.AUTO_REUSE):
+                if cnn_ctrl:
+                    ctrl_output = tf.layers.conv2d(
+                        inputs=inputs,
+                        filters=2,
+                        kernel_size=[3, 3],
+                        padding="same")
+                    inputs = ctrl_output
 
+                flat_inputs = tf.layers.flatten(inputs)
                 W = tf.get_variable(
                     name='ctrl_weights',
-                    shape=[inputs.shape[-1].value, shape],
+                    shape=[flat_inputs.shape[-1].value, shape],
                     initializer=initializer,
                     trainable=True)
                 b = tf.get_variable(
@@ -456,7 +467,7 @@ def dep_variational_mask(
                     shape=[shape],
                     initializer=tf.ones_initializer(),
                     trainable=True)
-                dep_input = tf.sigmoid(tf.matmul(inputs, W) + b)
+                dep_input = tf.sigmoid(tf.matmul(flat_inputs, W) + b)
 
                 tf.add_to_collection(
                     name='ctrl_weights',
@@ -465,11 +476,12 @@ def dep_variational_mask(
                     name='ctrl_bias',
                     value=b)
 
+
                 return tf.multiply(dep_input, pi), dep_input
 
         dep_pi = tf.make_template('dependent_pi', dependent_pi)
 
-        new_pi, dep_input = dep_pi(flat_inputs, pi_batch)
+        new_pi, dep_input = dep_pi(new_inputs, pi_batch, cnn_ctrl)
 
         tf.add_to_collection(
             name='dep_input',
@@ -488,7 +500,7 @@ def dep_variational_mask(
             test_pi = get_test_pi(a, b)
 
             def before_cond():
-                new_pi, dep_input_sample = dep_pi(flat_inputs, test_pi)
+                new_pi, dep_input_sample = dep_pi(new_inputs, test_pi, cnn_ctrl)
                 selection = tf.where(new_pi>0.5,
                                 x=tf.ones_like(new_pi),
                                 y=tf.zeros_like(new_pi)
@@ -503,9 +515,9 @@ def dep_variational_mask(
                                     )
                 final_selection = selection
                 final_selection = tf.tile(
-                selection, [tf.shape(flat_inputs)[0]])
+                selection, [tf.shape(new_inputs)[0]])
                 final_selection = tf.reshape(
-                final_selection,[tf.shape(flat_inputs)[0], shape])
+                final_selection,[tf.shape(new_inputs)[0], shape])
                 return final_selection, selection
 
             great_1 = tf.greater(iteration, tf.constant(6000.))
@@ -556,7 +568,7 @@ def dep_variational_mask(
                 modules.bias,
                 tf.cast(z, tf.float32))
 
-        return (run_masked_modules_withloop_and_concat(inputs,
+        return (function(new_inputs,
                 final_selection,
                 z,
                 shape,

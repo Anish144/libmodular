@@ -301,17 +301,14 @@ def run_masked_modules_withloop(
         dummy = module_fnc(inputs, 0, mask, weight, bias)
         output_shape = [batch_size] + dummy.shape[1:].as_list()
 
-    # Used modules is just a list of modules that we are using
-    used_modules = get_unique_modules(selection)
-
     condition = lambda accum, used_module, i: tf.less(
-        i, tf.shape(used_modules)[0])
+        i, module_count)
 
     def compute_module(accum, used_module, i):
-
         modules = tf.slice(selection, [0, i], [tf.shape(selection)[0], 1])
         input_mask = tf.reshape(tf.equal(1., modules), [-1])
         indices = tf.where(input_mask)
+
         affected_inp = tf.boolean_mask(inputs, input_mask)
         select_mask = tf.boolean_mask(mask, input_mask)
         select_weight = tf.boolean_mask(weight, input_mask)
@@ -319,21 +316,25 @@ def run_masked_modules_withloop(
 
         output = module_fnc(affected_inp, i, select_mask,
                             select_weight, select_bias)
+        activated_output = tf.nn.relu(output)
 
         # Add the outputs, scatter_nd makes it the right
         # shape with 0s for inputs not computed
         full_output = accum + tf.scatter_nd(indices,
-                                            output,
+                                            activated_output,
                                             tf.cast(output_shape, tf.int64))
+        full_output = tf.reshape(
+            full_output,
+            output_shape)
 
         i = tf.add(i, 1)
-        return full_output, used_modules, i
+        return full_output, selection, i
 
     i = tf.constant(0, tf.int32)
     output = tf.while_loop(
         condition,
         compute_module,
-        [tf.zeros(output_shape), used_modules, i])[0]
+        [tf.zeros(output_shape), selection, i])[0]
 
     return output
 
@@ -350,9 +351,6 @@ def run_masked_modules_withloop_and_concat(
         # This is the only way I am aware of to get the output shape easily
         dummy = module_fnc(inputs, 0, mask, weight, bias)
         output_shape = [batch_size] + dummy.shape[1:].as_list()
-
-    # Used modules is just a list of modules that we are using
-    # used_modules = get_unique_modules(selection)
 
     condition = lambda accum, selection, i: tf.less(i,
                                                     module_count)
@@ -381,6 +379,7 @@ def run_masked_modules_withloop_and_concat(
 
         accum_write = accum.write(i, scatter)
 
+        import pdb; pdb.set_trace()
         i = tf.add(i, 1)
         return accum_write, selection, i
 
