@@ -292,60 +292,60 @@ def run_masked_modules_withloop(
     inputs, selection, mask, module_count,
     units, module_fnc, output_shape, weight, bias
 ):
+    with tf.variable_scope(None, 'masked_with_loop'):
+        batch_size = tf.shape(inputs)[0]
+        if output_shape is not None:
+            output_shape = [batch_size] + output_shape
+        else:
+            # This is the only way I am aware of to get the output shape easily
+            dummy = module_fnc(inputs, 0, mask, weight, bias)
+            output_shape = [batch_size] + dummy.shape[1:].as_list()
 
-    batch_size = tf.shape(inputs)[0]
-    if output_shape is not None:
-        output_shape = [batch_size] + output_shape
-    else:
-        # This is the only way I am aware of to get the output shape easily
-        dummy = module_fnc(inputs, 0, mask, weight, bias)
-        output_shape = [batch_size] + dummy.shape[1:].as_list()
+        condition = lambda accum, used_module, i: tf.less(
+            i, module_count)
 
-    condition = lambda accum, used_module, i: tf.less(
-        i, module_count)
+        def compute_module(accum, used_module, i):
+            modules = tf.slice(selection, [0, i], [tf.shape(selection)[0], 1])
+            input_mask = tf.reshape(tf.equal(1., modules), [-1])
+            indices = tf.where(input_mask)
 
-    def compute_module(accum, used_module, i):
-        modules = tf.slice(selection, [0, i], [tf.shape(selection)[0], 1])
-        input_mask = tf.reshape(tf.equal(1., modules), [-1])
-        indices = tf.where(input_mask)
+            affected_inp = tf.boolean_mask(inputs, input_mask)
+            select_mask = tf.boolean_mask(mask, input_mask)
+            select_weight = tf.boolean_mask(weight, input_mask)
+            select_bias = tf.boolean_mask(bias, input_mask)
 
-        affected_inp = tf.boolean_mask(inputs, input_mask)
-        select_mask = tf.boolean_mask(mask, input_mask)
-        select_weight = tf.boolean_mask(weight, input_mask)
-        select_bias = tf.boolean_mask(bias, input_mask)
+            output = module_fnc(affected_inp, i, select_mask,
+                                select_weight, select_bias)
+            activated_output = tf.nn.relu(output)
 
-        output = module_fnc(affected_inp, i, select_mask,
-                            select_weight, select_bias)
-        activated_output = tf.nn.relu(output)
+            # Add the outputs, scatter_nd makes it the right
+            # shape with 0s for inputs not computed
+            full_output = accum + tf.scatter_nd(indices,
+                                                activated_output,
+                                                tf.cast(output_shape, tf.int64))
+            full_output = tf.reshape(
+                full_output,
+                output_shape)
 
-        # Add the outputs, scatter_nd makes it the right
-        # shape with 0s for inputs not computed
-        full_output = accum + tf.scatter_nd(indices,
-                                            activated_output,
-                                            tf.cast(output_shape, tf.int64))
-        full_output = tf.reshape(
-            full_output,
-            output_shape)
+            i = tf.add(i, 1)
+            return full_output, selection, i
 
-        i = tf.add(i, 1)
-        return full_output, selection, i
+        i = tf.constant(0, tf.int32)
+        output = tf.while_loop(
+            condition,
+            compute_module,
+            [tf.zeros(output_shape), selection, i])[0]
 
-    i = tf.constant(0, tf.int32)
-    output = tf.while_loop(
-        condition,
-        compute_module,
-        [tf.zeros(output_shape), selection, i])[0]
+        #Need to average outputs of modules by the number used
+        summed_selection = tf.reduce_sum(selection, axis=1)
+        safe_selected = tf.maximum(summed_selection, 1e-20)
+        inverted_summed_selection = tf.divide(1, safe_selected)
+        safe_inverted = tf.maximum(inverted_summed_selection, 1e-20)
 
-    #Need to average outputs of modules by the number used
-    summed_selection = tf.reduce_sum(selection, axis=1)
-    safe_selected = tf.maximum(summed_selection, 1e-20)
-    inverted_summed_selection = tf.divide(1, safe_selected)
-    safe_inverted = tf.maximum(inverted_summed_selection, 1e-20)
-
-    if output.shape.ndims > 3:
-        output = tf.einsum('bhwc,b->bhwc', output, safe_inverted)
-    else:
-        output = tf.einsum('bk,b->bk', output, safe_inverted)
+        if output.shape.ndims > 3:
+            output = tf.einsum('bhwc,b->bhwc', output, safe_inverted)
+        else:
+            output = tf.einsum('bk,b->bk', output, safe_inverted)
 
     return output
 

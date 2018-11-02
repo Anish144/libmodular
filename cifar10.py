@@ -33,8 +33,9 @@ arguments = {
     'alpha': 0.1,
     'output_add': False,
     'Datasets': ['cifar10'],
-    'cnn_ctrl': True
-    'training_steps': 20000
+    'cnn_ctrl': True,
+    'training_steps': 20000,
+    'debug': True
 }
 
 
@@ -324,8 +325,9 @@ def run():
     create_summary(get_dep_input(), 'dep_input', 'histogram')
 
     with tf.Session() as sess:
-        from tensorflow.python import debug as tf_debug
-        sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+        if arguments['debug']:
+            from tensorflow.python import debug as tf_debug
+            sess = tf_debug.LocalCLIDebugWrapperSession(sess)
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
 
         if REALRUN == 'True':
