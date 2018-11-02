@@ -336,6 +336,17 @@ def run_masked_modules_withloop(
         compute_module,
         [tf.zeros(output_shape), selection, i])[0]
 
+    #Need to average outputs of modules by the number used
+    summed_selection = tf.reduce_sum(selection, axis=1)
+    safe_selected = tf.maximum(summed_selection, 1e-20)
+    inverted_summed_selection = tf.divide(1, safe_selected)
+    safe_inverted = tf.maximum(inverted_summed_selection, 1e-20)
+
+    if output.shape.ndims > 3:
+        output = tf.einsum('bhwc,b->bhwc', output, safe_inverted)
+    else:
+        output = tf.einsum('bk,b->bk', output, safe_inverted)
+
     return output
 
 
@@ -379,7 +390,6 @@ def run_masked_modules_withloop_and_concat(
 
         accum_write = accum.write(i, scatter)
 
-        import pdb; pdb.set_trace()
         i = tf.add(i, 1)
         return accum_write, selection, i
 

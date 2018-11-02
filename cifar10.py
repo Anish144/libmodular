@@ -18,22 +18,23 @@ REALRUN = sys.argv[1]
 variational = sys.argv[2]
 
 arguments = {
-    'name': 'Function_mixture_cnn_ctrl',
+    'name': 'Function_averaging_unit_test_wihout_pi',
     'batch_size': 100,
     'test_batch_size': 100,
-    'cnn_module_list': [4, 4, 4, 4, 4, 4],
-    'cnn_filter_size': [4, 8, 16, 32, 64, 128],
-    'linear_module_list': [8, 4],
+    'cnn_module_list': [4],
+    'cnn_filter_size': [1],
+    'linear_module_list': [4],
     'linear_units': 8,
     'a_init_range': [3.5, 3.5],
     'b_init_range': [0.3, 0.3],
     'sample_size': 5,
-    'epoch_lim': 6,
-    'damp_length': 3,
+    'epoch_lim': 10,
+    'damp_length': 5,
     'alpha': 0.1,
-    'output_add': True,
+    'output_add': False,
     'Datasets': ['cifar10'],
     'cnn_ctrl': True
+    'training_steps': 20000
 }
 
 
@@ -313,19 +314,18 @@ def run():
     create_summary(b_list, 'b', 'histogram')
 
     create_summary(pi_log, 'pi', 'histogram')
-    create_summary(ctrl_logits, 'Controller_probs', 'image')
-    create_summary(s_log, 'Selection', 'image')
-    create_summary(bs_perst_log, 'Best_selection', 'image')
+    create_summary(ctrl_logits, 'Ctrl_and_pi', 'image')
+    create_summary(s_log, 'Inference', 'image')
+    create_summary(bs_perst_log, 'Ctrl', 'image')
 
     create_summary(tf.reduce_mean(ll), 'loglikelihood', 'scalar')
     create_summary(accuracy, 'accuracy', 'scalar')
 
     create_summary(get_dep_input(), 'dep_input', 'histogram')
-    saver = tf.train.Saver(keep_checkpoint_every_n_hours=2)
 
     with tf.Session() as sess:
-        # from tensorflow.python import debug as tf_debug
-        # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+        from tensorflow.python import debug as tf_debug
+        sess = tf_debug.LocalCLIDebugWrapperSession(sess)
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
 
         if REALRUN == 'True':
@@ -340,6 +340,8 @@ def run():
                  'b:{}_'.format(arguments['b_init_range']) +
                  'module_list:{}_'.format(arguments['cnn_module_list']) +
                  'filter_size:{}_'.format(arguments['cnn_filter_size']) +
+                 'output_add:{}_'.format(arguments['output_add']) +
+                 'cnn_ctrl:{}_'.format(arguments['cnn_ctrl']) +
                  f'{time}'), sess.graph)
 
             writer = tf.summary.FileWriter(
@@ -353,6 +355,8 @@ def run():
                  'b:{}_'.format(arguments['b_init_range']) +
                  'module_list:{}_'.format(arguments['cnn_module_list']) +
                  'filter_size:{}_'.format(arguments['cnn_filter_size']) +
+                 'output_add:{}_'.format(arguments['output_add']) +
+                 'cnn_ctrl:{}_'.format(arguments['cnn_ctrl']) +
                  f'{time}'), sess.graph)
 
         general_summaries = tf.summary.merge_all()
@@ -368,7 +372,7 @@ def run():
                 _ = sess.run(e_step, train_dict)
 
         j_s = 0.
-        for i in tqdm(range(400000)):
+        for i in tqdm(range(arguments['training_steps'])):
             # Switch between E-step and M-step
             train_dict[iteration_number] = j_s
             test_dict[iteration_number] = j_s
