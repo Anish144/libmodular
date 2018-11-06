@@ -18,24 +18,28 @@ REALRUN = sys.argv[1]
 variational = sys.argv[2]
 
 arguments = {
-    'name': 'Function_averaging_unit_test_wihout_pi',
+    'name': 'Unit_test',
     'batch_size': 100,
     'test_batch_size': 100,
-    'cnn_module_list': [4],
-    'cnn_filter_size': [1],
-    'linear_module_list': [4],
-    'linear_units': 8,
+    'cnn_module_list': [16, 16, 16, 16, 32, 32],
+    'cnn_filter_size': [4, 4, 8, 8, 8, 8],
+    # 'cnn_module_list': [4, 8],
+    # 'cnn_filter_size': [4, 6],
+    'linear_module_list': [8, 4],
+    'linear_units': 32,
+    # 'linear_module_list': [2],
+    # 'linear_units': 8,
     'a_init_range': [3.5, 3.5],
     'b_init_range': [0.3, 0.3],
     'sample_size': 5,
-    'epoch_lim': 10,
+    'epoch_lim': 15,
     'damp_length': 5,
     'alpha': 0.1,
-    'output_add': False,
+    'output_add': True,
     'Datasets': ['cifar10'],
-    'cnn_ctrl': True,
-    'training_steps': 20000,
-    'debug': True
+    'cnn_ctrl': False,
+    'training_steps': 100000,
+    'debug': False
 }
 
 
@@ -126,6 +130,8 @@ def run():
         pull_dataset = getattr(observations, dataset)
         (x_train, y_train), (x_test, y_test) = pull_dataset(
             '~/data/{}'.format(dataset))
+        if arguments['debug']:
+            x_train, y_train = x_train[:, :, :, :], y_train[:]
         y_test = y_test.astype(np.uint8)
         if dataset == 'cifar10':
             x_train = np.transpose(x_train, [0, 2, 3, 1])
@@ -202,8 +208,8 @@ def run():
 
             else:
                 print('Vanilla')
-                hidden, l, s = modular.modular_layer(
-                    activation, modules, 3, context)
+                hidden, l, s = modular.masked_layer(
+                    activation, modules, context, 0)
 
             fix_image_summary(ctrl_logits, l, module_count)
             fix_image_summary(s_log, s, module_count)
@@ -385,7 +391,7 @@ def run():
             if variational == 'True':
                 step = m_step
             else:
-                step = e_step if i % 1 == 0 else m_step
+                step = e_step if i % 10 == 0 else m_step
 
             # Sometimes generate summaries
             if i % 50 == 0:
@@ -412,14 +418,16 @@ def run():
                     test_writer.add_summary(summary, global_step=i)
 
             else:
-                sess.run(step, train_dict)
-
-            if i % (dataset_size // arguments['batch_size']) == 0 and j_s < arguments['epoch_lim'] - 1:
+                _, da = sess.run([step, get_op()], train_dict)
+                print('Damp:', da)
+                print('iteration:', j_s)
+            
+            warm_up = arguments['epoch_lim'] + arguments['damp_length']
+            if i % (dataset_size // arguments['batch_size']) == 0 and j_s < warm_up - 1:
                 j_s += 1.
-            elif j_s > arguments['epoch_lim'] - 1:
-                j_s = arguments['epoch_lim'] - 1
-            else:
-                j_s = j_s
+            elif j_s >= warm_up - 1:
+                j_s = warm_up - 1
+
 
         # if not os.path.exists(os.path.dirname(cwd + '/model')):
         #     os.makedirs(os.path.dirname(cwd + '/model'))

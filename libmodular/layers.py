@@ -226,6 +226,7 @@ def modular_layer(
             logits, best_selection_persistent)
 
 
+
 def dep_variational_mask(
     inputs, modules: ModulePool,
     context: ModularContext, tile_shape, iteration,
@@ -242,6 +243,8 @@ def dep_variational_mask(
         eps; threshold for dependent pi
     """
     with tf.variable_scope(None, 'dep_variational_mask'):
+        inputs = context.begin_modular(inputs)
+
         new_inputs = tf.stop_gradient(inputs)
 
         if output_add:
@@ -249,7 +252,6 @@ def dep_variational_mask(
         else:
             function = run_masked_modules_withloop_and_concat
 
-        new_inputs = context.begin_modular(new_inputs)
 
         shape = modules.module_count
         u_shape = [context.sample_size, shape]
@@ -273,17 +275,17 @@ def dep_variational_mask(
 
         initializer = tf.contrib.layers.xavier_initializer()
 
-        def dependent_pi(inputs, pi, cnn_ctrl):
+        def dependent_pi(ctrl_inputs, pi, cnn_ctrl):
             with tf.variable_scope('dep_pi', reuse=tf.AUTO_REUSE):
                 if cnn_ctrl:
                     ctrl_output = tf.layers.conv2d(
-                        inputs=inputs,
+                        inputs=ctrl_inputs,
                         filters=2,
                         kernel_size=[3, 3],
                         padding="same")
-                    inputs = ctrl_output
+                    ctrl_inputs = ctrl_output
 
-                flat_inputs = tf.layers.flatten(inputs)
+                flat_inputs = tf.layers.flatten(ctrl_inputs)
                 W = tf.get_variable(
                     name='ctrl_weights',
                     shape=[flat_inputs.shape[-1].value, shape],
@@ -304,7 +306,7 @@ def dep_variational_mask(
                     value=b)
 
 
-                return tf.multiply(dep_input, 1), dep_input
+                return tf.multiply(dep_input, pi), dep_input
 
         dep_pi = tf.make_template('dependent_pi', dependent_pi)
 
@@ -395,7 +397,7 @@ def dep_variational_mask(
                 modules.bias,
                 tf.cast(z, tf.float32))
 
-        return (function(new_inputs,
+        return (function(inputs,
                 final_selection,
                 z,
                 shape,
