@@ -11,7 +11,9 @@ ModularLayerAttributes = namedtuple(
                             'ModularLayerAttributes', 
                             ['selection', 'best_selection', 
                             'controller'])
-ModulePool = namedtuple('ModulePool', ['module_count', 'module_fnc', 'output_shape'])
+ModulePool = namedtuple(
+    'ModulePool', 
+    ['module_count', 'module_fnc', 'output_shape', 'units', 'weight', 'bias'])
 
 
 class ModularContext:
@@ -132,7 +134,6 @@ def run_modules_concat(inputs, selection, module_fnc, output_shape, module_count
 
     def compute_module(accum, module, i):
         mask = tf.equal(module, selection) #select all the elements with the module we are using
-        import pdb; pdb.set_trace()
         #OR operation on parallel axis, so that the input is passed through the module if any of the parallel has selected it
         reduced_mask = tf.reduce_any(mask, axis=-1) 
         indices = tf.where(reduced_mask) #Coordinates of TRUE
@@ -201,7 +202,7 @@ def run_masked_modules_withloop(inputs, selection, module_fnc, output_shape):
         inputs_considered = tf.slice(selection, 
                                     [0, module[0]], 
                                     [batch_size, 1])
-        re_mask = tf.reshape(tf.equal(1,inputs_considered), [-1])
+        re_mask = tf.reshape(tf.equal(1., inputs_considered), [-1])
         indices = tf.where(re_mask)
         affected_inp = tf.boolean_mask(inputs, re_mask)
 
@@ -220,6 +221,71 @@ def run_masked_modules_withloop(inputs, selection, module_fnc, output_shape):
         condition, compute_module, [tf.zeros(output_shape), used_modules, i])[0]
 
     return output
+
+
+def run_masked_modules_withloop_and_concat(
+    inputs, selection, mask, module_count,
+    units, module_fnc, output_shape, weight, bias
+):
+
+    batch_size = tf.shape(inputs)[0]
+    if output_shape is not None:
+        output_shape = [batch_size] + output_shape
+    else:
+        # This is the only way I am aware of to get the output shape easily
+        dummy = module_fnc(inputs, 0, weight, bias)
+        output_shape = [batch_size] + dummy.shape[1:].as_list()
+
+    condition = lambda accum, selection, i: tf.less(i,
+                                                    module_count)
+
+    output_array = tf.TensorArray(dtype=tf.float32,
+                                  size=module_count)
+
+    def compute_module(accum, selection, i):
+        modules = tf.slice(selection, [0, i], [tf.shape(selection)[0], 1])
+        input_mask = tf.reshape(tf.equal(1, modules), [-1])
+        indices = tf.where(input_mask)
+
+        affected_inp = tf.boolean_mask(inputs, input_mask)
+        select_mask = tf.boolean_mask(mask, input_mask)
+        select_weight = tf.boolean_mask(weight, input_mask)
+        select_bias = tf.boolean_mask(bias, input_mask)
+
+        output = module_fnc(affected_inp, i, select_weight, select_bias)
+
+        # Add the outputs, scatter_nd makes it the right shape
+        # with 0s for inputs not computed
+
+        scatter = tf.scatter_nd(
+            indices, output, tf.cast(output_shape, tf.int64))
+
+        accum_write = accum.write(i, scatter)
+
+        i = tf.add(i, 1)
+        return accum_write, selection, i
+
+    i = tf.constant(0, tf.int32)
+    output = tf.while_loop(
+        condition, compute_module, [output_array, selection, i])[0]
+
+    full_output = output.stack()
+
+    if full_output.shape.ndims > 3:
+        full_output = tf.transpose(full_output, [1, 2, 3, 0, 4])
+        full_output = tf.reshape(full_output,
+                                 [tf.shape(full_output)[0],
+                                  dummy.shape[1].value,
+                                  dummy.shape[2].value,
+                                  units * module_count])
+    else:
+        full_output = tf.transpose(full_output, [1, 0, 2])
+        full_output = tf.reshape(full_output,
+                                 [tf.shape(full_output)[0],
+                                  units * module_count])
+
+    return full_output
+
 
 
 def e_step(template, sample_size, dataset_size, data_indices):

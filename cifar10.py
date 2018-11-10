@@ -8,9 +8,16 @@ from tqdm import tqdm
 import sys
 from libmodular.modular import create_m_step_summaries, M_STEP_SUMMARIES
 
-p1 = sys.argv[1]
-p2 = sys.argv[2]
-p3 = sys.argv[3]
+
+def fix_image_summary(list_op, op, module_count):
+    list_op.append(
+        tf.cast(
+            tf.reshape(
+                op,
+                [1, -1, module_count, 1]),
+            tf.float32))
+pass
+
 
 def create_summary(list_of_ops_or_op, name, summary_type):
     summary = getattr(tf.summary, summary_type)
@@ -25,9 +32,11 @@ def create_summary(list_of_ops_or_op, name, summary_type):
     else:
         raise TypeError('Invalid type for summary')
 
+
 def get_initialiser(shape, p):
     init = np.random.binomial(n=1, p=p, size=shape)
     return tf.constant_initializer(init, dtype=tf.int32, verify_shape=True)
+
 
 def make_handle(sess, dataset):
     iterator = dataset.make_initializable_iterator()
@@ -43,9 +52,10 @@ def run():
     dataset_size = x_train.shape[0]
 
     # Train dataset
-    train = tf.data.Dataset.from_tensor_slices((x_train, y_train))._enumerate().repeat().shuffle(50000).batch(128)
+    batch = 100
+    train = tf.data.Dataset.from_tensor_slices((x_train, y_train))._enumerate().repeat().shuffle(50000).batch(batch)
     # Test dataset
-    test_batch_size = 500
+    test_batch_size = 100
     # dummy_data_indices = tf.zeros([test_batch_size], dtype=tf.int64)
     test = tf.data.Dataset.from_tensor_slices((x_test, y_test))._enumerate().repeat().batch(test_batch_size)
 
@@ -59,31 +69,57 @@ def run():
     inputs_tr = tf.transpose(inputs_cast, perm=(0, 2, 3, 1))
     labels_cast = tf.cast(labels, tf.int32)
 
-    module_count = 3
+    CNN_module_number = [32, 64, 128]
+    linear_module_number = [8, 4]
 
     def network(context: modular.ModularContext, masked_bernoulli=False):
         # 4 modular CNN layers
         activation = inputs_tr
         logit=[]
         bs_list = []
-        parallel = [int(p1), int(p2), int(p3)]
-        for j in range(len(parallel)):
+        for j in range(len(CNN_module_number)):
             input_channels = activation.shape[-1]
-            filter_shape = [3, 3, input_channels, 8]
-            modules = modular.create_conv_modules(filter_shape, module_count, strides=[1, 2, 2, 1])
+            filter_shape = [3, 3, input_channels, 1]
+            module_count = CNN_module_number[j]
+            modules = modular.create_conv_modules(
+                filter_shape, module_count, strides=[1, 2, 2, 1])
             if not masked_bernoulli:
-                hidden, l, bs = modular.modular_layer(activation, modules, parallel_count=parallel[j], context=context)
-                l = tf.reshape(tf.cast(tf.nn.softmax(l), tf.float32), [1,-1,module_count,1])
+                hidden, l, bs = modular.modular_layer(
+                    activation, modules, parallel_count=parallel[j], context=context)
+                l = tf.reshape(
+                    tf.cast(
+                        tf.nn.softmax(l), tf.float32), [1,-1, module_count,1])
                 logit.append(l)
-                bs = tf.reshape(tf.cast(bs, tf.float32), [1,-1,module_count,1])
+                bs = tf.reshape(tf.cast(bs, tf.float32), [1,-1, module_count,1])
                 bs_list.append(bs)
             else:
-                hidden, l, bs = modular.masked_layer(activation, modules, context, get_initialiser([dataset_size, module_count], 0.25))
-                logit.append(tf.sigmoid(l))
-            pooled = tf.nn.max_pool(hidden, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
+                hidden, l, bs = modular.masked_layer(
+                    activation,
+                    modules,
+                    context,
+                    get_initialiser([dataset_size, module_count], 0.75))
+                fix_image_summary(logit, l, module_count)
+                fix_image_summary(bs_list, bs, module_count)
+            pooled = tf.nn.max_pool(
+                hidden, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
             activation = tf.nn.relu(hidden)
+            activation = modular.batch_norm(activation)
 
         flattened = tf.layers.flatten(activation)
+
+        for j in range(len(linear_module_number)):
+            module_count = linear_module_number[j]
+            modules = modular.create_dense_modules(
+                flattened, module_count, units=8, activation=tf.nn.relu)
+            hidden, l, bs = modular.masked_layer(
+                flattened,
+                modules,
+                context,
+                get_initialiser([dataset_size, module_count], 0.75))
+            fix_image_summary(logit, l, module_count)
+            fix_image_summary(bs_list, bs, module_count)
+            flattened = modular.batch_norm(flattened)
+
         logits = tf.layers.dense(flattened, units=10)
 
         target = modular.modularize_target(labels_cast, context)
@@ -97,8 +133,8 @@ def run():
 
         return loglikelihood, logits, accuracy, selection_entropy, batch_selection_entropy, logit, bs_list
 
-    template = tf.make_template('network', network, masked_bernoulli=False)
-    optimizer = tf.train.AdamOptimizer()
+    template = tf.make_template('network', network, masked_bernoulli=True)
+    optimizer = tf.train.AdamOptimizer(learning_rate=0.01)
     e_step, m_step, eval = modular.modularize(template, optimizer, dataset_size,
                                               data_indices, sample_size=10)
     ll, logits, accuracy, s_entropy, bs_entropy, logit, bs_list = eval
@@ -111,18 +147,19 @@ def run():
     tf.summary.scalar('accuracy', accuracy)
     tf.summary.scalar('entropy/exp_selection', tf.exp(s_entropy))
     tf.summary.scalar('entropy/exp_batch_selection', tf.exp(bs_entropy))
+    create_summary(logit, 'Controller', 'histogram')
 
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
     with tf.Session(config=config) as sess:
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
         writer = tf.summary.FileWriter(
-            (f'logs/train_5m_withsummary_EM_VIT_3layer_parallel:' 
-            + p1 + p2 + p3  + f'_{time}'),
+            (f'logs/train_Concat_test_5_step_E_and_M_:' 
+            + f'_{time}'),
             sess.graph)
         test_writer = tf.summary.FileWriter(
-            (f'logs/test_5m_withsummary_EM_VIT_3layer_parallel:' 
-            + p1 + p2 + p3   + f'_{time}'),
+            (f'logs/test_Concat_test_5_step_E_and_M_:' 
+            + f'_{time}'),
             sess.graph)
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
@@ -131,16 +168,12 @@ def run():
         test_dict = {handle: make_handle(sess, test)}
 
         # Initial e-step
-        # feed_dict = {
-        #         inputs: x_train,
-        #         labels: y_train,
-        #         data_indices: np.arange(x_train.shape[0])
-        #         }
-        # sess.run(e_step, feed_dict)
+        # for _ in range(dataset_size // batch):
+        #     sess.run(e_step, train_dict)
 
-        for i in tqdm(range(200000)):
+        for i in tqdm(range(100000)):
             # Switch between E-step and M-step
-            step = e_step if i % 50 == 0 else m_step
+            step = e_step if i % 5 == 0 else m_step
 
             # Sometimes generate summaries
             if i % 100 == 0:
