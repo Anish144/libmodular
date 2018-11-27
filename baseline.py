@@ -92,8 +92,8 @@ def run():
             filter_shape = [3, 3, input_channels, modules_list[j]]
             activation = modular.conv_layer(activation,
                                             filter_shape,
-                                            strides=[1, 5, 5, 1],
-                                            pool=True)
+                                            strides=[1, 2, 2, 1],
+                                            pool=False)
 
         flattened = tf.layers.flatten(activation)
 
@@ -132,10 +132,10 @@ def run():
 
         if REALRUN=='True':
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Baseline_Advanced_CNN_tutorial_{time}',
+                f'logs/test:Baseline_Advanced_CNN_tutorial_no_pool_{time}',
                 sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Baseline_Advanced_CNN_tutorial_{time}',
+                f'logs/train:Baseline_Advanced_CNN_tutorial_no_pool_{time}',
                 sess.graph)
 
         general_summaries = tf.summary.merge_all()

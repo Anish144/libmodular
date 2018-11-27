@@ -42,9 +42,9 @@ tf.app.flags.DEFINE_integer('training_steps', 100000,
                             """How long to run experiment for""")
 
 arguments = {
-    'cnn_module_list': [4, 4, 4, 4
+    'cnn_module_list': [8, 8, 8, 8
                         ],
-    'cnn_filter_size': [16, 16, 32, 32],
+    'cnn_filter_size': [8, 8, 16, 16],
     'linear_module_list': [8, 4],
     'linear_units': 48,
     'a_init_range': [3.5, 3.5],
@@ -201,7 +201,7 @@ def run():
             filter_shape = [3, 3, input_channels, out_channel]
             modules = modular.create_conv_modules(filter_shape,
                                                   module_count,
-                                                  strides=[1, 5, 5, 1])
+                                                  strides=[1, 2, 2, 1])
 
             hidden, l, s, pi, bs = modular.dep_variational_mask(
                 inputs=activation,
@@ -213,9 +213,6 @@ def run():
                 b_init=arguments['b_init_range'],
                 output_add=FLAGS.output_add,
                 cnn_ctrl=FLAGS.cnn_ctrl)
-            hidden = tf.nn.max_pool(
-                hidden,
-                ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME')
 
             fix_image_summary(ctrl_logits, l, module_count)
             fix_image_summary(s_log, s, module_count)

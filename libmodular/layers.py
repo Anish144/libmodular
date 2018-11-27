@@ -109,12 +109,12 @@ def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
                 new_filter = tf.transpose(new_filter, [1, 2, 0, 3, 4])
                 # [fh,fw,b*c,d]
                 new_filter = tf.reshape(new_filter,
-                                            [fw, fh, b * c, d])
+                                        [fw, fh, b * c, d])
                 # [h,w,b,c]
                 x = tf.transpose(x, [1, 2, 0, 3])
                 # [1,h,w,b*c]
                 x = tf.reshape(x,
-                                            [1, h, w, b * c])
+                               [1, h, w, b * c])
 
                 out = tf.nn.depthwise_conv2d(
                     x,
@@ -179,18 +179,19 @@ def dep_variational_mask(
         else:
             function = run_masked_modules_withloop_and_concat
 
-
         shape = modules.module_count
         u_shape = [context.sample_size, shape]
 
         a = tf.maximum(tf.get_variable(name='a',
                        dtype=tf.float32,
                        initializer=tf.random_uniform(
-                           [shape], minval=a_init[0], maxval=a_init[1])), 1e-20)
+                           [shape], minval=a_init[0],
+                           maxval=a_init[1])), 1e-20)
         b = tf.maximum(tf.get_variable(name='b',
                        dtype=tf.float32,
                        initializer=tf.random_uniform(
-                           [shape], minval=b_init[0], maxval=b_init[1])), 1e-20)
+                           [shape], minval=b_init[0],
+                           maxval=b_init[1])), 1e-20)
 
         pi = get_pi(a, b, u_shape)
         pi_batch = tf.expand_dims(pi, 1)
@@ -232,7 +233,6 @@ def dep_variational_mask(
                     name='ctrl_bias',
                     value=b)
 
-
                 return tf.multiply(dep_input, pi), dep_input
 
         dep_pi = tf.make_template('dependent_pi', dependent_pi)
@@ -256,24 +256,25 @@ def dep_variational_mask(
             test_pi = get_test_pi(a, b)
 
             def before_cond():
-                new_pi, dep_input_sample = dep_pi(new_inputs, test_pi, cnn_ctrl)
-                selection = tf.where(new_pi>0.5,
-                                x=tf.ones_like(new_pi),
-                                y=tf.zeros_like(new_pi)
-                                )
+                new_pi, dep_input_sample = dep_pi(
+                    new_inputs, test_pi, cnn_ctrl)
+                selection = tf.where(new_pi > 0.5,
+                                     x=tf.ones_like(new_pi),
+                                     y=tf.zeros_like(new_pi)
+                                     )
                 final_selection = selection
                 return final_selection, selection
 
             def after_ind():
-                selection = tf.where(test_pi>0.5,
-                                    x=tf.ones_like(test_pi),
-                                    y=tf.zeros_like(test_pi)
-                                    )
+                selection = tf.where(test_pi > 0.5,
+                                     x=tf.ones_like(test_pi),
+                                     y=tf.zeros_like(test_pi)
+                                     )
                 final_selection = selection
                 final_selection = tf.tile(
-                selection, [tf.shape(new_inputs)[0]])
+                    selection, [tf.shape(new_inputs)[0]])
                 final_selection = tf.reshape(
-                final_selection,[tf.shape(new_inputs)[0], shape])
+                    final_selection, [tf.shape(new_inputs)[0], shape])
                 return final_selection, selection
 
             great_1 = tf.greater(iteration, tf.constant(6000.))
@@ -292,7 +293,7 @@ def dep_variational_mask(
 
             final_selection, selection = tf.cond(cond,
                                                  after_ind,
-                                                 before_cond) 
+                                                 before_cond)
 
             tf.add_to_collection(
                 name='sparsity',

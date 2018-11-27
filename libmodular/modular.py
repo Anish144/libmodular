@@ -534,13 +534,8 @@ def m_step(
     tf.add_to_collection(name='KL',
                          value=KL)
 
-    # optimizer_2 = tf.train.AdamOptimizer(learning_rate=0.3)
-
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(update_ops):
-        # opt_2 = optimizer_2.minimize(
-        #     joint_objective,
-        #     var_list=tf.get_collection('ctrl_params'))
         opt = optimizer.minimize(joint_objective)
 
     return opt
