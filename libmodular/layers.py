@@ -126,7 +126,6 @@ def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
             units=list(shape)[-1], weight=filter, bias=biases)
 
 
-
 def conv_layer(x, shape, strides, padding='SAME'):
     with tf.variable_scope(None, 'simple_conv_layer'):
         filter_shape = list(shape)
@@ -147,38 +146,52 @@ def modular_layer(inputs, modules: ModulePool, parallel_count: int, context: Mod
     """
     with tf.variable_scope(None, 'modular_layer'):
 
-        #[sample_size*batch x 784]
-        inputs = context.begin_modular(inputs) #At first step, tile the inputs so it can go through ALL modules
+        # [sample_size*batch x 784]
+        # At first step, tile the inputs so it can go through ALL modules
+        inputs = context.begin_modular(inputs)
 
         flat_inputs = tf.layers.flatten(inputs)
-        #Takes in input and returns tensor of shape modules * parallel
-        #One output per module, [sample_size*batch x modules]
-        logits = tf.layers.dense(flat_inputs, modules.module_count * parallel_count)
-        logits = tf.reshape(logits, [-1, parallel_count, modules.module_count]) #[sample*batch x parallel x module]
+        # Takes in input and returns tensor of shape modules * parallel
+        # One output per module, [sample_size*batch x modules]
+        logits = tf.layers.dense(
+            flat_inputs, modules.module_count * parallel_count)
+        # [sample*batch x parallel x module]
+        logits = tf.reshape(logits, [-1, parallel_count, modules.module_count])
 
-        #For each module and batch, have one logit, so [Batch x modules]
-        ctrl = tfd.Categorical(logits) #Create controller with logits
+        # For each module and batch, have one logit, so [Batch x modules]
+        ctrl = tfd.Categorical(logits)  # Create controller with logits
 
-        initializer = tf.random_uniform_initializer(maxval=modules.module_count, dtype=tf.int32)
+        initializer = tf.random_uniform_initializer(
+            maxval=modules.module_count, dtype=tf.int32)
         shape = [context.dataset_size, parallel_count]
-        best_selection_persistent = tf.get_variable('best_selection', shape, tf.int32, initializer) #Different for each layer
+        best_selection_persistent = tf.get_variable(
+            'best_selection', shape, tf.int32, initializer)  # Different for each layer
 
         if context.mode == ModularMode.E_STEP:
-            #Use gather to get the selection of the batch indices of the data [1...32] then [32...64]
-            #[1 x Batch x parallel]
-            best_selection = tf.gather(best_selection_persistent, context.data_indices)[tf.newaxis] #[1 x B x parallel]
-            samples = ctrl.sample() #One sample for each tiled batch [Sample*batch x parallel]
-            sampled_selection = tf.reshape(samples, [context.sample_size, -1, parallel_count]) #[Sample x Batch x parallel]
-            selection = tf.concat([best_selection, sampled_selection[1:]], axis=0) #Need selection to be sample size in 1st Dim
-            selection = tf.reshape(selection, [-1, parallel_count]) #Back to [Sample*batch x parallel]
+            # Use gather to get the selection of the batch indices of the data [1...32] then [32...64]
+            # [1 x Batch x parallel]
+            best_selection = tf.gather(best_selection_persistent, context.data_indices)[
+                tf.newaxis]  # [1 x B x parallel]
+            # One sample for each tiled batch [Sample*batch x parallel]
+            samples = ctrl.sample()
+            # [Sample x Batch x parallel]
+            sampled_selection = tf.reshape(
+                samples, [context.sample_size, -1, parallel_count])
+            # Need selection to be sample size in 1st Dim
+            selection = tf.concat(
+                [best_selection, sampled_selection[1:]], axis=0)
+            # Back to [Sample*batch x parallel]
+            selection = tf.reshape(selection, [-1, parallel_count])
         elif context.mode == ModularMode.M_STEP:
-            selection = tf.gather(best_selection_persistent, context.data_indices)
+            selection = tf.gather(
+                best_selection_persistent, context.data_indices)
         elif context.mode == ModularMode.EVALUATION:
             selection = ctrl.mode()
         else:
             raise ValueError('Invalid modular mode')
 
-        attrs = ModularLayerAttributes(selection, best_selection_persistent, ctrl)
+        attrs = ModularLayerAttributes(
+            selection, best_selection_persistent, ctrl)
         context.layers.append(attrs)
 
         return run_modules(inputs, selection, modules.module_fnc, modules.output_shape), logits, best_selection_persistent
@@ -203,62 +216,47 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext, initializ
         logits = tf.layers.dense(flat_inputs, modules.module_count)
         logits = tf.sigmoid(logits)
 
-        ctrl_bern = tfd.Bernoulli(logits) #Create controller with logits
+        ctrl_bern = tfd.Bernoulli(logits)  # Create controller with logits
 
         shape = [context.dataset_size, modules.module_count]
-        best_selection_persistent = tf.get_variable('best_selection', shape=shape, dtype=tf.int32, initializer=initializer) #Different for each layer
+        best_selection_persistent = tf.get_variable(
+            'best_selection', shape=shape, dtype=tf.int32, initializer=initializer)  # Different for each layer
 
         if context.mode == ModularMode.E_STEP:
-            best_selection = tf.gather(best_selection_persistent, context.data_indices)[tf.newaxis]
+            best_selection = tf.gather(
+                best_selection_persistent, context.data_indices)[tf.newaxis]
             samples = ctrl_bern.sample()
-            sampled_selection = tf.reshape(samples, [context.sample_size, -1, modules.module_count]) 
-            selection = tf.concat([best_selection, sampled_selection[1:]], axis=0)
+            sampled_selection = tf.reshape(
+                samples, [context.sample_size, -1, modules.module_count])
+            selection = tf.concat(
+                [best_selection, sampled_selection[1:]], axis=0)
             selection = tf.reshape(selection, [-1, modules.module_count])
             selection = tf.cast(selection, tf.int32)
         elif context.mode == ModularMode.M_STEP:
-            selection = tf.gather(best_selection_persistent, context.data_indices)
+            selection = tf.gather(
+                best_selection_persistent, context.data_indices)
         elif context.mode == ModularMode.EVALUATION:
-            selection = tf.cast(tf.where(logits>0.5,
-                                x=tf.ones_like(logits),
-                                y=tf.zeros_like(logits)), tf.int32)
+            selection = tf.cast(tf.where(logits > 0.5,
+                                         x=tf.ones_like(logits),
+                                         y=tf.zeros_like(logits)), tf.int32)
         else:
             raise ValueError('Invalid modular mode')
 
-        attrs = ModularLayerAttributes(selection, best_selection_persistent, ctrl_bern)
+        attrs = ModularLayerAttributes(
+            selection, best_selection_persistent, ctrl_bern)
         context.layers.append(attrs)
 
-        if inputs.shape.ndims > 3:
-            new_biases = tf.einsum(
-                'mo,bm->bmo',
-                modules.bias,
-                tf.cast(selection, tf.float32))
-            new_weights = tf.einsum(
-                'miocd,bm->bmiocd',
-                modules.weight,
-                tf.cast(selection, tf.float32))
-        else:
-            new_weights = tf.einsum(
-                'mio,bm->bmio',
-                modules.weight,
-                tf.cast(selection, tf.float32))
-            new_biases = tf.einsum(
-                'mo,bm->bmo',
-                modules.bias,
-                tf.cast(selection, tf.float32))
-
-        return (run_masked_modules_withloop_and_concat(
-            inputs, 
-            selection, 
+        return (run_masked_modules_withloop(
+            inputs,
+            selection,
             selection,
             modules.module_count,
             modules.units,
-            modules.module_fnc, 
-            modules.output_shape, 
-            new_weights,
-            new_biases), 
-                logits, best_selection_persistent)
-
-
+            modules.module_fnc,
+            modules.output_shape,
+            modules.weight,
+            modules.bias),
+            logits, best_selection_persistent)
 
 
 def modularize_target(target, context: ModularContext):

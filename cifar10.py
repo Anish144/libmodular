@@ -16,6 +16,8 @@ def fix_image_summary(list_op, op, module_count):
                 op,
                 [1, -1, module_count, 1]),
             tf.float32))
+
+
 pass
 
 
@@ -52,16 +54,19 @@ def run():
     dataset_size = x_train.shape[0]
 
     # Train dataset
-    batch = 100
-    train = tf.data.Dataset.from_tensor_slices((x_train, y_train))._enumerate().repeat().shuffle(50000).batch(batch)
+    batch = 25
+    train = tf.data.Dataset.from_tensor_slices(
+        (x_train, y_train))._enumerate().repeat().shuffle(50000).batch(batch)
     # Test dataset
-    test_batch_size = 100
+    test_batch_size = 25
     # dummy_data_indices = tf.zeros([test_batch_size], dtype=tf.int64)
-    test = tf.data.Dataset.from_tensor_slices((x_test, y_test))._enumerate().repeat().batch(test_batch_size)
+    test = tf.data.Dataset.from_tensor_slices(
+        (x_test, y_test))._enumerate().repeat().batch(test_batch_size)
 
     # Handle to switch between datasets
     handle = tf.placeholder(tf.string, [])
-    itr = tf.data.Iterator.from_string_handle(handle, train.output_types, train.output_shapes)
+    itr = tf.data.Iterator.from_string_handle(
+        handle, train.output_types, train.output_shapes)
     data_indices, (inputs, labels) = itr.get_next()
 
     # Preprocessing
@@ -69,39 +74,42 @@ def run():
     inputs_tr = tf.transpose(inputs_cast, perm=(0, 2, 3, 1))
     labels_cast = tf.cast(labels, tf.int32)
 
-    CNN_module_number = [32, 64, 128]
+    CNN_module_number = [4, 4, 4, 4]
+    filter_list = [16, 16, 32, 32]
     linear_module_number = [8, 4]
 
     def network(context: modular.ModularContext, masked_bernoulli=False):
         # 4 modular CNN layers
         activation = inputs_tr
-        logit=[]
+        logit = []
         bs_list = []
         for j in range(len(CNN_module_number)):
             input_channels = activation.shape[-1]
-            filter_shape = [3, 3, input_channels, 1]
+            out_filter = filter_list[j]
+            filter_shape = [3, 3, input_channels, out_filter]
             module_count = CNN_module_number[j]
             modules = modular.create_conv_modules(
-                filter_shape, module_count, strides=[1, 2, 2, 1])
+                filter_shape, module_count, strides=[1, 5, 5, 1])
             if not masked_bernoulli:
                 hidden, l, bs = modular.modular_layer(
                     activation, modules, parallel_count=parallel[j], context=context)
                 l = tf.reshape(
                     tf.cast(
-                        tf.nn.softmax(l), tf.float32), [1,-1, module_count,1])
+                        tf.nn.softmax(l), tf.float32), [1, -1, module_count, 1])
                 logit.append(l)
-                bs = tf.reshape(tf.cast(bs, tf.float32), [1,-1, module_count,1])
+                bs = tf.reshape(tf.cast(bs, tf.float32),
+                                [1, -1, module_count, 1])
                 bs_list.append(bs)
             else:
                 hidden, l, bs = modular.masked_layer(
                     activation,
                     modules,
                     context,
-                    get_initialiser([dataset_size, module_count], 0.75))
+                    get_initialiser([dataset_size, module_count], 0.5))
                 fix_image_summary(logit, l, module_count)
                 fix_image_summary(bs_list, bs, module_count)
             pooled = tf.nn.max_pool(
-                hidden, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
+                hidden, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME')
             activation = tf.nn.relu(hidden)
             activation = modular.batch_norm(activation)
 
@@ -126,7 +134,8 @@ def run():
         loglikelihood = tf.distributions.Categorical(logits).log_prob(target)
 
         predicted = tf.argmax(logits, axis=-1, output_type=tf.int32)
-        accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, target), tf.float32))
+        accuracy = tf.reduce_mean(
+            tf.cast(tf.equal(predicted, target), tf.float32))
 
         selection_entropy = context.selection_entropy()
         batch_selection_entropy = context.batch_selection_entropy()
@@ -154,15 +163,16 @@ def run():
     with tf.Session(config=config) as sess:
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
         writer = tf.summary.FileWriter(
-            (f'logs/train_Concat_test_5_step_E_and_M_:' 
-            + f'_{time}'),
+            (f'logs/train_Concat_test_5_step_E_and_M_:'
+             + f'_{time}'),
             sess.graph)
         test_writer = tf.summary.FileWriter(
-            (f'logs/test_Concat_test_5_step_E_and_M_:' 
-            + f'_{time}'),
+            (f'logs/test_Concat_test_5_step_E_and_M_:'
+             + f'_{time}'),
             sess.graph)
         general_summaries = tf.summary.merge_all()
-        m_step_summaries = tf.summary.merge([create_m_step_summaries(), general_summaries])
+        m_step_summaries = tf.summary.merge(
+            [create_m_step_summaries(), general_summaries])
         sess.run(tf.global_variables_initializer())
         train_dict = {handle: make_handle(sess, train)}
         test_dict = {handle: make_handle(sess, test)}
@@ -179,23 +189,22 @@ def run():
             if i % 100 == 0:
                 summaries = m_step_summaries if step == m_step else general_summaries
                 _, summary_data = sess.run([step, summaries], train_dict)
-                writer.add_summary(summary_data, global_step=i) 
+                writer.add_summary(summary_data, global_step=i)
                 summary_data = sess.run(general_summaries, test_dict)
                 test_writer.add_summary(summary_data, global_step=i)
 
                 accuracy_log = []
-                for test in range(x_test.shape[0]//test_batch_size):
+                for test in range(x_test.shape[0] // stest_batch_size):
                     test_accuracy = sess.run(accuracy, test_dict)
                     accuracy_log.append(test_accuracy)
                 final_accuracy = np.mean(accuracy_log)
                 summary = tf.Summary()
-                summary.value.add(tag='Test Accuracy', 
-                                  simple_value = final_accuracy)
+                summary.value.add(tag='Test Accuracy',
+                                  simple_value=final_accuracy)
 
                 test_writer.add_summary(summary, global_step=i)
             else:
                 sess.run(step, train_dict)
-
 
         writer.close()
         test_writer.close()
