@@ -141,7 +141,7 @@ def run():
         (x_train, y_train), (x_test, y_test) = pull_dataset(
             '~/data/{}'.format(dataset))
         if FLAGS.debug:
-            x_train, y_train = x_train[:, :, :, :], y_train[:]
+            x_train, y_train = x_train[:100, :, :, :], y_train[:100]
         y_test = y_test.astype(np.uint8)
         if dataset == 'cifar10':
             x_train = np.transpose(x_train, [0, 2, 3, 1])
@@ -377,10 +377,7 @@ def run():
             train_dict[iterate] = i
             test_dict[iterate] = i
 
-            if FLAGS.variational:
-                step = m_step
-            else:
-                step = e_step if i % 10 == 0 else m_step
+            step = m_step
 
             # Sometimes generate summaries
             if i % 50 == 0:
