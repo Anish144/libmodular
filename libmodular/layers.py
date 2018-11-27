@@ -14,17 +14,6 @@ from tensorflow.python import debug as tf_debug
 import os
 
 
-def run_once(f):
-    def wrapper(*args, **kwargs):
-        if not wrapper.has_run:
-            wrapper.has_run = True
-            return f(*args, **kwargs)
-        else:
-            return args, kwargs
-    wrapper.has_run = False
-    return wrapper
-
-
 def create_dense_modules(
     inputs_or_shape,
     module_count: int,
@@ -60,12 +49,13 @@ def create_dense_modules(
             weights are [module x input_shape x units]
             """
             # Put modules in the lef tmost axis
-            w = tf.transpose(w, [1, 0, 2, 3])
-            b = tf.transpose(b, [1, 0, 2])
-            out = tf.einsum('bi,bio->bo', x, w[a]) + b[a]
-            if activation is not None:
-                out = activation(out)
-            return out
+            with tf.variable_scope(None, "linear_loop"):
+                w = tf.transpose(w, [1, 0, 2, 3])
+                b = tf.transpose(b, [1, 0, 2])
+                out = tf.einsum('bi,bio->bo', x, w[a]) + b[a]
+                if activation is not None:
+                    out = activation(out)
+                return out
 
         return ModulePool(
             module_count,
@@ -74,7 +64,7 @@ def create_dense_modules(
             weight=weights, bias=biases)
 
 
-def conv_layer(x, shape, strides, padding='SAME'):
+def conv_layer(x, shape, strides, padding='SAME', pool=False):
     with tf.variable_scope(None, 'simple_conv_layer'):
         filter_shape = list(shape)
         filter = tf.get_variable(
@@ -85,9 +75,11 @@ def conv_layer(x, shape, strides, padding='SAME'):
         biases = tf.get_variable(
             'biases', biases_shape, initializer=tf.zeros_initializer())
         hidden = tf.nn.conv2d(x, filter, strides, padding) + biases
-        pooled = tf.nn.max_pool(
-            hidden, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
-        relu = tf.nn.relu(pooled)
+        if pool:
+            hidden = tf.nn.max_pool(
+                hidden,
+                ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME')
+        relu = tf.nn.relu(hidden)
         return batch_norm(relu)
 
 
@@ -103,41 +95,42 @@ def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
             'biases', biases_shape, initializer=tf.zeros_initializer())
 
         def module_fnc(x, a, mask, weight, bias):
-            fw, fh, d = shape[0], shape[1], shape[-1]
-            h, w, c = x.shape[1].value, x.shape[2].value, x.shape[-1].value
-            b = tf.shape(x)[0]
-            new_filter = tf.transpose(weight,
-                                      [1, 0, 2, 3, 4, 5])
-            new_biases = tf.transpose(bias,
-                                      [1, 0, 2])
-            new_biases = new_biases[a]
-            new_filter = new_filter[a]
-            # [fh,fw,b,c,d]
-            filter_transpose = tf.transpose(new_filter, [1, 2, 0, 3, 4])
-            # [fh,fw,b*c,d]
-            filter_reshape = tf.reshape(filter_transpose,
-                                        [fw, fh, b * c, d])
-            # [h,w,b,c]
-            inputs_transpose = tf.transpose(x, [1, 2, 0, 3])
-            # [1,h,w,b*c]
-            inputs_reshape = tf.reshape(inputs_transpose,
-                                        [1, h, w, b * c])
+            with tf.variable_scope(None, "depthwise_conv2d"):
+                fw, fh, d = shape[0], shape[1], shape[-1]
+                h, w, c = x.shape[1].value, x.shape[2].value, x.shape[-1].value
+                b = tf.shape(x)[0]
+                new_filter = tf.transpose(weight,
+                                          [1, 0, 2, 3, 4, 5])
+                new_biases = tf.transpose(bias,
+                                          [1, 0, 2])
+                new_biases = new_biases[a]
+                new_filter = new_filter[a]
+                # [fh,fw,b,c,d]
+                new_filter = tf.transpose(new_filter, [1, 2, 0, 3, 4])
+                # [fh,fw,b*c,d]
+                new_filter = tf.reshape(new_filter,
+                                            [fw, fh, b * c, d])
+                # [h,w,b,c]
+                x = tf.transpose(x, [1, 2, 0, 3])
+                # [1,h,w,b*c]
+                x = tf.reshape(x,
+                                            [1, h, w, b * c])
 
-            out = tf.nn.depthwise_conv2d(
-                inputs_reshape,
-                filter=filter_reshape,
-                strides=[1, 1, 1, 1],
-                padding=padding)
-            if padding == "SAME":
-                out = tf.reshape(out, [h, w, -1, c, d])
-            if padding == "VALID":
-                out = tf.reshape(out, [h - fh + 1, w - fw + 1, -1, c, d])
-            out = tf.transpose(out, [2, 0, 1, 3, 4])
-            out = tf.reduce_sum(out, axis=3)
-            out = tf.transpose(out, [1, 2, 0, 3]) + new_biases
-            out = tf.transpose(out, [2, 0, 1, 3])
+                out = tf.nn.depthwise_conv2d(
+                    x,
+                    filter=new_filter,
+                    strides=[1, 1, 1, 1],
+                    padding=padding)
+                if padding == "SAME":
+                    out = tf.reshape(out, [h, w, -1, c, d])
+                if padding == "VALID":
+                    out = tf.reshape(out, [h - fh + 1, w - fw + 1, -1, c, d])
+                out = tf.transpose(out, [2, 0, 1, 3, 4])
+                out = tf.reduce_sum(out, axis=3)
+                out = tf.transpose(out, [1, 2, 0, 3]) + new_biases
+                out = tf.transpose(out, [2, 0, 1, 3])
 
-            return out
+                return out
 
         def module_fnc_original(x, a, mask, weight, bias):
             return tf.nn.conv2d(x, weight[a], strides, padding) + bias[a]
@@ -159,72 +152,6 @@ def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
 def batch_norm(inputs):
     with tf.variable_scope(None, 'batch_norm'):
         return tf.layers.batch_normalization(inputs)
-
-
-def modular_layer(
-    inputs, modules: ModulePool, parallel_count: int, context: ModularContext
-):
-    """
-    Takes in modules and runs them based on the best selection
-    """
-    with tf.variable_scope(None, 'modular_layer'):
-
-        # [sample_size*batch x 784]
-        inputs = context.begin_modular(inputs)
-        # At first step, tile the inputs so it can go through ALL modules
-
-        flat_inputs = tf.layers.flatten(inputs)
-        # Takes in input and returns tensor of shape modules * parallel
-        # One output per module, [sample_size*batch x modules]
-        logits = tf.layers.dense(
-            flat_inputs, modules.module_count * parallel_count)
-        logits = tf.reshape(logits, [-1, parallel_count, modules.module_count])
-        # [sample*batch x parallel x module]
-
-        # For each module and batch, have one logit, so [Batch x modules]
-        ctrl = tfd.Categorical(logits)  # Create controller with logits
-
-        initializer = tf.random_uniform_initializer(
-            maxval=modules.module_count, dtype=tf.int32)
-        shape = [context.dataset_size, parallel_count]
-        best_selection_persistent = tf.get_variable(
-            'best_selection', shape, tf.int32, initializer)
-        # Different for each layer
-
-        if context.mode == ModularMode.E_STEP:
-            # Use gather to get the selection of
-            # the batch indices of the data [1...32] then [32...64]
-            # [1 x Batch x parallel]
-            best_selection = tf.gather(
-                best_selection_persistent,
-                context.data_indices)[tf.newaxis]  # [1 x B x parallel]
-            samples = ctrl.sample()
-            # One sample for each tiled batch [Sample*batch x parallel]
-            sampled_selection = tf.reshape(
-                samples, [context.sample_size, -1, parallel_count])
-            # [Sample x Batch x parallel]
-            selection = tf.concat(
-                [best_selection, sampled_selection[1:]], axis=0)
-            # Need selection to be sample size in 1st Dim
-            selection = tf.reshape(selection, [-1, parallel_count])
-            # Back to [Sample*batch x parallel]
-        elif context.mode == ModularMode.M_STEP:
-            selection = tf.gather(
-                best_selection_persistent, context.data_indices)
-        elif context.mode == ModularMode.EVALUATION:
-            selection = ctrl.mode()
-        else:
-            raise ValueError('Invalid modular mode')
-
-        attrs = ModularLayerAttributes(
-            selection, best_selection_persistent, ctrl)
-        context.layers.append(attrs)
-
-        return (run_masked_modules_withloop_and_concat(
-            inputs, selection,
-            modules.module_fnc, modules.output_shape),
-            logits, best_selection_persistent)
-
 
 
 def dep_variational_mask(
@@ -485,22 +412,14 @@ def modularize_target(target, context: ModularContext):
     return target
 
 
-def modularize(template, optimizer, dataset_size, data_indices,
-               sample_size, variational, num_batches=None):
-    e = e_step(template, sample_size, dataset_size, data_indices)
-    m = m_step(template, optimizer, dataset_size,
-               data_indices, variational, None)
-    return e, m
-
-
 def modularize_variational(
     template, optimizer, dataset_size,
-    data_indices, variational, num_batches,
+    data_indices, num_batches,
     sample_size, iteration, epoch_lim, damp_length,
     alpha
 ):
     m = m_step(template, optimizer, dataset_size, data_indices,
-               variational, num_batches,
+               num_batches,
                sample_size, iteration, epoch_lim, damp_length, alpha)
     eval = evaluation(template, data_indices, dataset_size)
     return m, eval

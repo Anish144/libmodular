@@ -14,32 +14,42 @@ import tensorflow as tf
 
 cwd = os.getcwd()
 
-REALRUN = sys.argv[1]
-variational = sys.argv[2]
+FLAGS = tf.app.flags.FLAGS
+
+# Flags
+tf.app.flags.DEFINE_boolean('real_run', True, """Save model information""")
+tf.app.flags.DEFINE_string('name', 'Default_Run',
+                           """Name to be saved under""")
+tf.app.flags.DEFINE_integer('batch_size', 25,
+                            """Batch size""")
+tf.app.flags.DEFINE_integer('test_batch_size', 25,
+                            """Test Batch size""")
+tf.app.flags.DEFINE_integer('sample_size', 1,
+                            """Sample size for estimator""")
+tf.app.flags.DEFINE_integer('epoch_lim', 5,
+                            """N_0 for annealing""")
+tf.app.flags.DEFINE_integer('damp_length', 5,
+                            """N_1 for annealing""")
+tf.app.flags.DEFINE_float('alpha', 0.1,
+                          """Alpha hyperparam for dropout prior""")
+tf.app.flags.DEFINE_boolean('output_add', False,
+                            """Average functionality of modules""")
+tf.app.flags.DEFINE_boolean('cnn_ctrl', False,
+                            """Convolutional controller""")
+tf.app.flags.DEFINE_boolean('debug', False,
+                            """Run only basic strucutre of model""")
+tf.app.flags.DEFINE_integer('training_steps', 100000,
+                            """How long to run experiment for""")
 
 arguments = {
-    'name': 'Unit_test',
-    'batch_size': 100,
-    'test_batch_size': 100,
-    'cnn_module_list': [32, 32, 32, 32, 64, 64],
-    'cnn_filter_size': [2, 2, 4, 4, 4, 4],
-    # 'cnn_module_list': [4, 8],
-    # 'cnn_filter_size': [4, 6],
+    'cnn_module_list': [4, 4, 4, 4
+                        ],
+    'cnn_filter_size': [16, 16, 32, 32],
     'linear_module_list': [8, 4],
-    'linear_units': 32,
-    # 'linear_module_list': [2],
-    # 'linear_units': 8,
+    'linear_units': 48,
     'a_init_range': [3.5, 3.5],
     'b_init_range': [0.3, 0.3],
-    'sample_size': 5,
-    'epoch_lim': 15,
-    'damp_length': 5,
-    'alpha': 0.1,
-    'output_add': True,
     'Datasets': ['cifar10'],
-    'cnn_ctrl': False,
-    'training_steps': 100000,
-    'debug': False
 }
 
 
@@ -119,18 +129,18 @@ def run():
 
     No args.
     """
-    # Load dataset
 
     x_train_full = []
     x_test_full = []
     y_train_full = []
     y_test_full = []
 
+    # Load and Preprocess data
     for dataset in arguments['Datasets']:
         pull_dataset = getattr(observations, dataset)
         (x_train, y_train), (x_test, y_test) = pull_dataset(
             '~/data/{}'.format(dataset))
-        if arguments['debug']:
+        if FLAGS.debug:
             x_train, y_train = x_train[:, :, :, :], y_train[:]
         y_test = y_test.astype(np.uint8)
         if dataset == 'cifar10':
@@ -143,18 +153,18 @@ def run():
 
     x_train = np.vstack(x_train_full)
     x_test = np.vstack(x_test_full)
-    y_train = np.vstack(y_train_full)[0,:]
-    y_test = np.vstack(y_test_full)[0,:]
+    y_train = np.vstack(y_train_full)[0, :]
+    y_test = np.vstack(y_test_full)[0, :]
 
     dataset_size = x_train.shape[0]
 
-    num_batches = dataset_size / arguments['batch_size']
+    num_batches = dataset_size / FLAGS.batch_size
 
     # Train dataset
-    train = get_dataset(x_train, y_train, arguments['batch_size'])
+    train = get_dataset(x_train, y_train, FLAGS.batch_size)
 
     # Test dataset
-    test = get_dataset(x_test, y_test, arguments['test_batch_size'])
+    test = get_dataset(x_test, y_test, FLAGS.test_batch_size)
 
     # Handle to switch between datasets
     handle = tf.placeholder(tf.string, [])
@@ -183,7 +193,7 @@ def run():
         pi_log = []
         bs_perst_log = []
 
-        #CNN layers 
+        # CNN layers
         for j in range(len(arguments['cnn_module_list'])):
             input_channels = activation.shape[-1]
             module_count = arguments['cnn_module_list'][j]
@@ -191,45 +201,37 @@ def run():
             filter_shape = [3, 3, input_channels, out_channel]
             modules = modular.create_conv_modules(filter_shape,
                                                   module_count,
-                                                  strides=[1, 1, 1, 1])
+                                                  strides=[1, 5, 5, 1])
 
-            if variational == 'True':
-                print('Variational')
-                hidden, l, s, pi, bs = modular.dep_variational_mask(
-                    inputs=activation,
-                    modules=modules,
-                    context=context,
-                    tile_shape=tf.shape(inputs_tr)[0],
-                    iteration=iterate,
-                    a_init=arguments['a_init_range'],
-                    b_init=arguments['b_init_range'],
-                    output_add=arguments['output_add'],
-                    cnn_ctrl=arguments['cnn_ctrl'])
-
-            else:
-                print('Vanilla')
-                hidden, l, s = modular.masked_layer(
-                    activation, modules, context, 0)
+            hidden, l, s, pi, bs = modular.dep_variational_mask(
+                inputs=activation,
+                modules=modules,
+                context=context,
+                tile_shape=tf.shape(inputs_tr)[0],
+                iteration=iterate,
+                a_init=arguments['a_init_range'],
+                b_init=arguments['b_init_range'],
+                output_add=FLAGS.output_add,
+                cnn_ctrl=FLAGS.cnn_ctrl)
+            hidden = tf.nn.max_pool(
+                hidden,
+                ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME')
 
             fix_image_summary(ctrl_logits, l, module_count)
             fix_image_summary(s_log, s, module_count)
             fix_image_summary(bs_perst_log, bs, module_count)
             pi_log.append(pi)
 
-            pooled = tf.nn.max_pool(
-                hidden,
-                ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1],
-                padding='SAME')
-            activation = modular.batch_norm(pooled)
+            activation = modular.batch_norm(hidden)
 
         flattened = tf.layers.flatten(activation)
 
-        #Linear layers
+        # Linear layers
         for i in range(len(arguments['linear_module_list'])):
             print('Linear')
             module_count = arguments['linear_module_list'][i]
             modules = modular.create_dense_modules(
-                flattened, 
+                flattened,
                 module_count,
                 units=arguments['linear_units'])
             flattened, l, s, pi, bs = modular.dep_variational_mask(
@@ -240,7 +242,7 @@ def run():
                 iteration=iterate,
                 a_init=arguments['a_init_range'],
                 b_init=arguments['b_init_range'],
-                output_add=arguments['output_add'],
+                output_add=FLAGS.output_add,
                 cnn_ctrl=False)
 
             flattened = modular.batch_norm(flattened)
@@ -277,27 +279,17 @@ def run():
 
     optimizer = tf.train.AdamOptimizer(learning_rate=0.001)
 
-    if variational == 'False':
-        e_step, m_step, eval = modular.modularize(
-            template,
-            optimizer,
-            dataset_size,
-            data_indices,
-            sample_size=10,
-            variational=variational)
-    else:
-        m_step, eval = modular.modularize_variational(
-            template,
-            optimizer,
-            dataset_size,
-            data_indices,
-            variational,
-            num_batches,
-            arguments['sample_size'],
-            iteration_number,
-            arguments['epoch_lim'], 
-            arguments['damp_length'],
-            arguments['alpha'])
+    m_step, eval = modular.modularize_variational(
+        template,
+        optimizer,
+        dataset_size,
+        data_indices,
+        num_batches,
+        FLAGS.sample_size,
+        iteration_number,
+        FLAGS.epoch_lim,
+        FLAGS.damp_length,
+        FLAGS.alpha)
 
     (ll,
         logits,
@@ -330,41 +322,43 @@ def run():
 
     create_summary(get_dep_input(), 'dep_input', 'histogram')
 
+    saver = tf.train.Saver()
+
     with tf.Session() as sess:
-        if arguments['debug']:
+        if FLAGS.debug:
             from tensorflow.python import debug as tf_debug
             sess = tf_debug.LocalCLIDebugWrapperSession(sess)
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
 
-        if REALRUN == 'True':
+        if FLAGS.real_run:
             test_writer = tf.summary.FileWriter(
                 (f'logs/test:'
-                 'name:{}_'.format(arguments['name']) +
-                 'alpha:{}_'.format(arguments['alpha']) +
-                 'samples:.{}_'.format(arguments['sample_size']) +
-                 'epoch_lim:{}_'.format(arguments['epoch_lim']) +
-                 'damp_length:{}_'.format(arguments['damp_length']) +
+                 'name:{}_'.format(FLAGS.name) +
+                 'alpha:{}_'.format(FLAGS.alpha) +
+                 'samples:.{}_'.format(FLAGS.sample_size) +
+                 'epoch_lim:{}_'.format(FLAGS.epoch_lim) +
+                 'damp_length:{}_'.format(FLAGS.damp_length) +
                  'a:{}_'.format(arguments['a_init_range']) +
                  'b:{}_'.format(arguments['b_init_range']) +
-                 'module_list:{}_'.format(arguments['cnn_module_list']) +
-                 'filter_size:{}_'.format(arguments['cnn_filter_size']) +
-                 'output_add:{}_'.format(arguments['output_add']) +
-                 'cnn_ctrl:{}_'.format(arguments['cnn_ctrl']) +
+                 # 'module_list:{}_'.format(arguments['cnn_module_list']) +
+                 # 'filter_size:{}_'.format(arguments['cnn_filter_size']) +
+                 'output_add:{}_'.format(FLAGS.output_add) +
+                 'cnn_ctrl:{}_'.format(FLAGS.cnn_ctrl) +
                  f'{time}'), sess.graph)
 
             writer = tf.summary.FileWriter(
                 (f'logs/train:'
-                 'name:{}_'.format(arguments['name']) +
-                 'alpha:{}_'.format(arguments['alpha']) +
-                 'samples:.{}_'.format(arguments['sample_size']) +
-                 'epoch_lim:{}_'.format(arguments['epoch_lim']) +
-                 'damp_length:{}_'.format(arguments['damp_length']) +
+                 'name:{}_'.format(FLAGS.name) +
+                 'alpha:{}_'.format(FLAGS.alpha) +
+                 'samples:.{}_'.format(FLAGS.sample_size) +
+                 'epoch_lim:{}_'.format(FLAGS.epoch_lim) +
+                 'damp_length:{}_'.format(FLAGS.damp_length) +
                  'a:{}_'.format(arguments['a_init_range']) +
                  'b:{}_'.format(arguments['b_init_range']) +
-                 'module_list:{}_'.format(arguments['cnn_module_list']) +
-                 'filter_size:{}_'.format(arguments['cnn_filter_size']) +
-                 'output_add:{}_'.format(arguments['output_add']) +
-                 'cnn_ctrl:{}_'.format(arguments['cnn_ctrl']) +
+                 # 'module_list:{}_'.format(arguments['cnn_module_list']) +
+                 # 'filter_size:{}_'.format(arguments['cnn_filter_size']) +
+                 'output_add:{}_'.format(FLAGS.output_add) +
+                 'cnn_ctrl:{}_'.format(FLAGS.cnn_ctrl) +
                  f'{time}'), sess.graph)
 
         general_summaries = tf.summary.merge_all()
@@ -375,20 +369,15 @@ def run():
         train_dict = {handle: make_handle(sess, train)}
         test_dict = {handle: make_handle(sess, test)}
 
-        if variational == 'False':
-            for i in tqdm(range(dataset_size // arguments['batch_size'])):
-                _ = sess.run(e_step, train_dict)
-
         j_s = 0.
-        for i in tqdm(range(arguments['training_steps'])):
-            # Switch between E-step and M-step
+        for i in tqdm(range(FLAGS.training_steps)):
             train_dict[iteration_number] = j_s
             test_dict[iteration_number] = j_s
 
             train_dict[iterate] = i
             test_dict[iterate] = i
 
-            if variational == 'True':
+            if FLAGS.variational:
                 step = m_step
             else:
                 step = e_step if i % 10 == 0 else m_step
@@ -400,7 +389,7 @@ def run():
                     [step, summaries, accuracy],
                     train_dict)
 
-                if REALRUN == 'True':
+                if FLAGS.real_run:
                     writer.add_summary(summary_data, global_step=i)
 
                     summary_data = sess.run(summaries, test_dict)
@@ -408,7 +397,7 @@ def run():
 
                     accuracy_log = []
                     for test in range(
-                        x_test.shape[0] // arguments['test_batch_size']):
+                            x_test.shape[0] // FLAGS.test_batch_size):
                         test_accuracy = sess.run(accuracy, test_dict)
                         accuracy_log.append(test_accuracy)
                     final_accuracy = np.mean(accuracy_log)
@@ -421,19 +410,20 @@ def run():
                 _, da = sess.run([step, get_op()], train_dict)
                 print('Damp:', da)
                 print('iteration:', j_s)
-            
-            warm_up = arguments['epoch_lim'] + arguments['damp_length']
-            if i % (dataset_size // arguments['batch_size']) == 0 and j_s < warm_up - 1:
+
+            warm_up = FLAGS.epoch_lim + FLAGS.damp_length
+            if (i % (dataset_size // FLAGS.batch_size) == 0 and
+               j_s < warm_up - 1):
                 j_s += 1.
             elif j_s >= warm_up - 1:
                 j_s = warm_up - 1
 
+            if FLAGS.real_run:
+                if i % 5000 == 0:
+                    save = saver.save(
+                        sess, cwd + "/tmp/model.ckpt", global_step=i)
 
-        # if not os.path.exists(os.path.dirname(cwd + '/model')):
-        #     os.makedirs(os.path.dirname(cwd + '/model'))
-        # saver.save(sess, cwd + '/model')
-
-        if REALRUN == 'True':
+        if FLAGS.real_run:
             writer.close()
             test_writer.close()
 

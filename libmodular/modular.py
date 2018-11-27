@@ -496,7 +496,7 @@ def e_step(template, sample_size, dataset_size, data_indices):
 
 def m_step(
     template, optimizer, dataset_size,
-    data_indices, variational,
+    data_indices,
     num_batches, sample_size, iteration, epoch_lim,
     damp_length, alpha
 ):
@@ -504,57 +504,35 @@ def m_step(
     context = ModularContext(
         ModularMode.M_STEP, data_indices, dataset_size, sample_size)
 
-    if variational == 'False':
-        print('NOT VAR')
-        loglikelihood = template(context)[0]
-        selection_logprob = context.selection_logprob()
-        KL = context.get_variational_kl(0.3)
+    loglikelihood = template(context)[0]
 
-        ctrl_objective = -tf.reduce_mean(selection_logprob)
-        module_objective = -tf.reduce_mean(loglikelihood)
-        joint_objective = -(tf.reduce_mean(
-            selection_logprob + loglikelihood - KL))
+    damp = get_damper(iteration, get_damp_list(epoch_lim, damp_length))
 
-        tf.summary.scalar(
-            'KL', tf.reduce_sum(KL), collections=[M_STEP_SUMMARIES])
-        tf.summary.scalar(
-            'ctrl_objective', ctrl_objective, collections=[M_STEP_SUMMARIES])
-        tf.summary.scalar(
-            'module_objective',
-            module_objective, collections=[M_STEP_SUMMARIES])
-        tf.summary.scalar(
-            'ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
-    else:
-        print('VAR')
-        loglikelihood = template(context)[0]
+    KL = context.get_variational_kl(alpha)
 
-        damp = get_damper(iteration, get_damp_list(epoch_lim, damp_length))
+    mod_KL = tf.reduce_sum((damp) * (1 / num_batches) * KL)
 
-        KL = context.get_variational_kl(alpha)
+    joint_objective = - (loglikelihood - mod_KL)
 
-        mod_KL = tf.reduce_sum((damp) * (1 / num_batches) * KL)
+    tf.summary.scalar(
+        'KL', mod_KL, collections=[M_STEP_SUMMARIES])
+    tf.summary.scalar(
+        'ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
+    module_objective = tf.reduce_sum(loglikelihood)
+    tf.summary.scalar(
+        'module_objective',
+        -module_objective, collections=[M_STEP_SUMMARIES])
+    tf.summary.scalar(
+        'damp', tf.reduce_sum(damp), collections=[M_STEP_SUMMARIES])
+    tf.summary.scalar(
+        'Real KL', tf.reduce_sum(KL), collections=[M_STEP_SUMMARIES])
 
-        joint_objective = - (loglikelihood - mod_KL)
-
-        tf.summary.scalar(
-            'KL', mod_KL, collections=[M_STEP_SUMMARIES])
-        tf.summary.scalar(
-            'ELBO', -joint_objective, collections=[M_STEP_SUMMARIES])
-        module_objective = tf.reduce_sum(loglikelihood)
-        tf.summary.scalar(
-            'module_objective',
-            -module_objective, collections=[M_STEP_SUMMARIES])
-        tf.summary.scalar(
-            'damp', tf.reduce_sum(damp), collections=[M_STEP_SUMMARIES])
-        tf.summary.scalar(
-            'Real KL', tf.reduce_sum(KL), collections=[M_STEP_SUMMARIES])
-
-        tf.add_to_collection(name='mod_KL',
-                             value=mod_KL)
-        tf.add_to_collection(name='Damp',
-                             value=damp)
-        tf.add_to_collection(name='KL',
-                             value=KL)
+    tf.add_to_collection(name='mod_KL',
+                         value=mod_KL)
+    tf.add_to_collection(name='Damp',
+                         value=damp)
+    tf.add_to_collection(name='KL',
+                         value=KL)
 
     # optimizer_2 = tf.train.AdamOptimizer(learning_rate=0.3)
 
@@ -611,4 +589,3 @@ def get_op():
 
 def get_KL():
     return tf.get_collection('KL')
-

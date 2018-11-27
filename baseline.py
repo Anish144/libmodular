@@ -43,26 +43,26 @@ def create_summary(list_of_ops_or_op, name, summary_type):
 # noinspection PyProtectedMember
 def run():
      # Load dataset
-    (x_train_1, y_train_1), (x_test_1, y_test_1) = observations.cifar10(
+    (x_train_1, y_train), (x_test_1, y_test_1) = observations.cifar10(
         '~/data/cifar10')
-    y_test_1 = y_test_1.astype(np.uint8)  # Fix test_data dtype
+    y_test = y_test_1.astype(np.uint8)  # Fix test_data dtype
 
-    (x_train_2, y_train_2), (x_test_2, y_test_2) = observations.svhn(
-        '~/data/svhn')
-    y_test_2 = y_test_2.astype(np.uint8)  # Fix test_data dtype
+    # (x_train_2, y_train_2), (x_test_2, y_test_2) = observations.svhn(
+    #     '~/data/svhn')
+    # y_test_2 = y_test_2.astype(np.uint8)  # Fix test_data dtype
 
     # Preprocessing
-    x_train_1 = np.transpose(x_train_1, [0, 2, 3, 1])
-    x_test_1 = np.transpose(x_test_1, [0, 2, 3, 1])
+    x_train = np.transpose(x_train_1, [0, 2, 3, 1])
+    x_test = np.transpose(x_test_1, [0, 2, 3, 1])
 
-    x_train = np.concatenate([x_train_1, x_train_2])
-    y_train = np.concatenate([y_train_1, y_train_2])
-    x_test = np.concatenate([x_test_1, x_test_2])
-    y_test = np.concatenate([y_test_1, y_test_2])
+    # x_train = np.concatenate([x_train_1, x_train_2])
+    # y_train = np.concatenate([y_train_1, y_train_2])
+    # x_test = np.concatenate([x_test_1, x_test_2])
+    # y_test = np.concatenate([y_test_1, y_test_2])
 
     dataset_size = x_train.shape[0]
 
-    batch_size = 100
+    batch_size = 50
     num_batches = dataset_size / batch_size
 
     # Train dataset
@@ -85,21 +85,22 @@ def run():
         # 4 modular CNN layers
         activation = inputs_tr
 
-        modules_list = [32 * 1, 64 * 1, 128 * 1]
+        modules_list = [64, 64, 128, 128]
         for j in range(len(modules_list)):
             input_channels = activation.shape[-1]
             module_count = modules_list[j]
             filter_shape = [3, 3, input_channels, modules_list[j]]
-            activation = modular.conv_layer(activation, 
-                                            filter_shape, 
-                                            strides=[1,1,1,1])
- 
+            activation = modular.conv_layer(activation,
+                                            filter_shape,
+                                            strides=[1, 5, 5, 1],
+                                            pool=True)
+
         flattened = tf.layers.flatten(activation)
 
-        modules_list = [8, 4]
-        units = 8
+        modules_list = [2, 1]
+        units = 192
         for i in range(len(modules_list)):
-            flattened = tf.layers.dense(flattened, modules_list[i]*units,
+            flattened = tf.layers.dense(flattened, modules_list[i] * units,
                                         activation=tf.nn.relu,
                                         kernel_initializer=tf.contrib.layers.xavier_initializer())
             flattened = modular.batch_norm(flattened)
@@ -112,12 +113,12 @@ def run():
         predicted = tf.argmax(logits, axis=-1, output_type=tf.int32)
         accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, target), tf.float32))
 
-        return (loglikelihood, accuracy) 
+        return (loglikelihood, accuracy)
 
     template = tf.make_template('network', network)
 
-    (ll, 
-    accuracy) = template()
+    (ll,
+     accuracy) = template()
 
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(update_ops):
@@ -131,10 +132,10 @@ def run():
 
         if REALRUN=='True':
             test_writer = tf.summary.FileWriter(
-                f'logs/test:Multitask_Baseline_single_filter_modules_{time}',
+                f'logs/test:Baseline_Advanced_CNN_tutorial_{time}',
                 sess.graph)
             writer = tf.summary.FileWriter(
-                f'logs/train:Multitask_Baseline_single_filter_modules_{time}',
+                f'logs/train:Baseline_Advanced_CNN_tutorial_{time}',
                 sess.graph)
 
         general_summaries = tf.summary.merge_all()
@@ -143,35 +144,35 @@ def run():
         test_dict = {handle: make_handle(sess, test)}
 
 
-        for i in tqdm(range(50000)):
+        for i in tqdm(range(100000)):
 
             # Sometimes generate summaries
-            if i % 50 == 0: 
+            if i % 50 == 0:
                 summaries = general_summaries
                 _, summary_data = sess.run(
-                    [opt, summaries], 
+                    [opt, summaries],
                     train_dict)
 
                 if REALRUN=='True':
-                    writer.add_summary(summary_data, global_step=i) 
+                    writer.add_summary(summary_data, global_step=i)
 
                     summary_data = sess.run(summaries, test_dict)
                     test_writer.add_summary(summary_data, global_step=i)
 
                     accuracy_log = []
-                    for test in range(x_test.shape[0]//test_batch_size):
+                    for test in range(x_test.shape[0] // test_batch_size):
                         test_accuracy = sess.run(accuracy, test_dict)
                         accuracy_log.append(test_accuracy)
                     final_accuracy = np.mean(accuracy_log)
                     summary = tf.Summary()
-                    summary.value.add(tag='Test Accuracy', 
-                                      simple_value = final_accuracy)
+                    summary.value.add(tag='Test Accuracy',
+                                      simple_value=final_accuracy)
                     test_writer.add_summary(summary, global_step=i)
 
             else:
                 sess.run(opt, train_dict)
 
-        if REALRUN=='True':
+        if REALRUN == 'True':
             writer.close()
             test_writer.close()
 
