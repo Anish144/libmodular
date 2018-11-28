@@ -34,16 +34,14 @@ def create_dense_modules(
         biases = tf.get_variable(
             'biases', biases_shape, initializer=tf.zeros_initializer())
 
-        def module_fnc(x, a, weights, biases):
+        def module_fnc(x, a):
             """
             Takes in input and a module, multiplies input with
             the weights of the module
             weights are [module x input_shape x units]
             """
             # Put modules in the lef tmost axis
-            w = tf.transpose(weights, [1, 0, 2, 3])
-            b = tf.transpose(biases, [1, 0, 2])
-            out = tf.einsum('bi,bio->bo', x, w[a]) + b[a]
+            out = tf.einsum('bi,io->bo', x, weights[a]) + biases[a]
             if activation is not None:
                 out = activation(out)
             return out
@@ -71,7 +69,7 @@ def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
         biases = tf.get_variable(
             'biases', biases_shape, initializer=tf.zeros_initializer())
 
-        def module_fnc(x, a, filter, bias):
+        def module_fnc(x, a):
             fw, fh, d = shape[0], shape[1], shape[-1]
             h, w, c = x.shape[1].value, x.shape[2].value, x.shape[-1].value
             b = tf.shape(x)[0]
@@ -95,7 +93,7 @@ def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
             out = tf.nn.depthwise_conv2d(
                 inputs_reshape,
                 filter=filter_reshape,
-                strides=[1, 1, 1, 1],
+                strides=strides,
                 padding=padding)
             if padding == "SAME":
                 out = tf.reshape(out, [h, w, -1, c, d])
@@ -108,8 +106,8 @@ def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
 
             return out
 
-        def module_fnc_original(x, a, mask, weight, bias):
-            return tf.nn.conv2d(x, weight[a], strides, padding) + bias[a]
+        def module_fnc_original(x, a):
+            return tf.nn.conv2d(x, filter[a], strides, padding) + biases[a]
 
         def module_fnc_non_modular(x, a, mask, weight, bias):
             new_filter = tf.transpose(weight,
@@ -122,7 +120,7 @@ def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
                 x, new_filter, strides, padding) + new_biases[a]
 
         return ModulePool(
-            module_count, module_fnc, output_shape=None,
+            module_count, module_fnc_original, output_shape=None,
             units=list(shape)[-1], weight=filter, bias=biases)
 
 
@@ -253,9 +251,7 @@ def masked_layer(inputs, modules: ModulePool, context: ModularContext, initializ
             modules.module_count,
             modules.units,
             modules.module_fnc,
-            modules.output_shape,
-            modules.weight,
-            modules.bias),
+            modules.output_shape),
             logits, best_selection_persistent)
 
 

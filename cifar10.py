@@ -89,7 +89,7 @@ def run():
             filter_shape = [3, 3, input_channels, out_filter]
             module_count = CNN_module_number[j]
             modules = modular.create_conv_modules(
-                filter_shape, module_count, strides=[1, 5, 5, 1])
+                filter_shape, module_count, strides=[1, 2, 2, 1])
             if not masked_bernoulli:
                 hidden, l, bs = modular.modular_layer(
                     activation, modules, parallel_count=parallel[j], context=context)
@@ -108,8 +108,8 @@ def run():
                     get_initialiser([dataset_size, module_count], 0.5))
                 fix_image_summary(logit, l, module_count)
                 fix_image_summary(bs_list, bs, module_count)
-            pooled = tf.nn.max_pool(
-                hidden, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME')
+            # pooled = tf.nn.max_pool(
+            #     hidden, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME')
             activation = tf.nn.relu(hidden)
             activation = modular.batch_norm(activation)
 
@@ -118,7 +118,7 @@ def run():
         for j in range(len(linear_module_number)):
             module_count = linear_module_number[j]
             modules = modular.create_dense_modules(
-                flattened, module_count, units=8, activation=tf.nn.relu)
+                flattened, module_count, units=48)
             hidden, l, bs = modular.masked_layer(
                 flattened,
                 modules,
@@ -163,11 +163,11 @@ def run():
     with tf.Session(config=config) as sess:
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
         writer = tf.summary.FileWriter(
-            (f'logs/train_Concat_test_5_step_E_and_M_:'
+            (f'logs/train_Tutorial_Bernoulli_mask_EM_Func_add_1step_:'
              + f'_{time}'),
             sess.graph)
         test_writer = tf.summary.FileWriter(
-            (f'logs/test_Concat_test_5_step_E_and_M_:'
+            (f'logs/test_Tutorial_Bernoulli_mask_EM_Func_add_1step_:'
              + f'_{time}'),
             sess.graph)
         general_summaries = tf.summary.merge_all()
@@ -183,10 +183,10 @@ def run():
 
         for i in tqdm(range(100000)):
             # Switch between E-step and M-step
-            step = e_step if i % 5 == 0 else m_step
+            step = e_step if i % 1 == 0 else m_step
 
             # Sometimes generate summaries
-            if i % 100 == 0:
+            if i % 50 == 0:
                 summaries = m_step_summaries if step == m_step else general_summaries
                 _, summary_data = sess.run([step, summaries], train_dict)
                 writer.add_summary(summary_data, global_step=i)
@@ -194,7 +194,7 @@ def run():
                 test_writer.add_summary(summary_data, global_step=i)
 
                 accuracy_log = []
-                for test in range(x_test.shape[0] // stest_batch_size):
+                for test in range(x_test.shape[0] // test_batch_size):
                     test_accuracy = sess.run(accuracy, test_dict)
                     accuracy_log.append(test_accuracy)
                 final_accuracy = np.mean(accuracy_log)

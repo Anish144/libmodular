@@ -195,7 +195,10 @@ def run_masked_modules(inputs, selection, module_fnc, output_shape):
     return output
 
 
-def run_masked_modules_withloop(inputs, selection, module_fnc, output_shape):
+def run_masked_modules_withloop(
+    inputs, selection, mask, module_count,
+    units, module_fnc, output_shape
+):
 
     batch_size = tf.shape(inputs)[0]
     if output_shape is not None:
@@ -217,11 +220,13 @@ def run_masked_modules_withloop(inputs, selection, module_fnc, output_shape):
         inputs_considered = tf.slice(selection,
                                      [0, module[0]],
                                      [batch_size, 1])
-        re_mask = tf.reshape(tf.equal(1., inputs_considered), [-1])
+        re_mask = tf.reshape(tf.equal(1, inputs_considered), [-1])
         indices = tf.where(re_mask)
         affected_inp = tf.boolean_mask(inputs, re_mask)
 
         output = module_fnc(affected_inp, module[0])
+
+        output = tf.nn.relu(output)
 
         # Add the outputs, scatter_nd makes it the right shape with 0s for inputs not computed
         full_output = accum + tf.scatter_nd(indices,
@@ -238,7 +243,8 @@ def run_masked_modules_withloop(inputs, selection, module_fnc, output_shape):
         [tf.zeros(output_shape), used_modules, i])[0]
 
     # Need to average outputs of modules by the number used
-    summed_selection = tf.reduce_sum(selection, axis=1)
+    selection_cast = tf.cast(selection, tf.float32)
+    summed_selection = tf.reduce_sum(selection_cast, axis=1)
     safe_selected = tf.maximum(summed_selection, 1e-20)
     inverted_summed_selection = tf.divide(1, safe_selected)
     safe_inverted = tf.maximum(inverted_summed_selection, 1e-20)
