@@ -119,7 +119,7 @@ def create_conv_modules(shape, module_count: int, strides, padding='SAME'):
                 out = tf.nn.depthwise_conv2d(
                     x,
                     filter=new_filter,
-                    strides=[1, 1, 1, 1],
+                    strides=strides,
                     padding=padding)
                 if padding == "SAME":
                     out = tf.reshape(out, [h, w, -1, c, d])
