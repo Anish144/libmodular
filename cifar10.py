@@ -86,10 +86,10 @@ def run():
         for j in range(len(CNN_module_number)):
             input_channels = activation.shape[-1]
             out_filter = filter_list[j]
-            filter_shape = [3, 3, input_channels, out_filter]
+            filter_shape = [5, 5, input_channels, out_filter]
             module_count = CNN_module_number[j]
             modules = modular.create_conv_modules(
-                filter_shape, module_count, strides=[1, 2, 2, 1])
+                filter_shape, module_count, strides=[1, 1, 1, 1])
             if not masked_bernoulli:
                 hidden, l, bs = modular.modular_layer(
                     activation, modules, parallel_count=parallel[j], context=context)
@@ -108,8 +108,8 @@ def run():
                     get_initialiser([dataset_size, module_count], 0.5))
                 fix_image_summary(logit, l, module_count)
                 fix_image_summary(bs_list, bs, module_count)
-            # pooled = tf.nn.max_pool(
-            #     hidden, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME')
+            hidden = tf.nn.max_pool(
+                hidden, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME')
             activation = tf.nn.relu(hidden)
             activation = modular.batch_norm(activation)
 
@@ -163,12 +163,12 @@ def run():
     with tf.Session(config=config) as sess:
         time = '{:%Y-%m-%d_%H:%M:%S}'.format(datetime.datetime.now())
         writer = tf.summary.FileWriter(
-            (f'logs/train_Tutorial_Bernoulli_mask_EM_Func_add_1step_:'
-             + f'_{time}'),
+            (f'logs/train_Tutorial_Bernoulli_mask_EM_Func_add_1step_:' +
+             f'_{time}'),
             sess.graph)
         test_writer = tf.summary.FileWriter(
-            (f'logs/test_Tutorial_Bernoulli_mask_EM_Func_add_1step_:'
-             + f'_{time}'),
+            (f'logs/test_Tutorial_Bernoulli_mask_EM_Func_add_1step_:' +
+             f'_{time}'),
             sess.graph)
         general_summaries = tf.summary.merge_all()
         m_step_summaries = tf.summary.merge(
@@ -178,15 +178,15 @@ def run():
         test_dict = {handle: make_handle(sess, test)}
 
         # Initial e-step
-        # for _ in range(dataset_size // batch):
-        #     sess.run(e_step, train_dict)
+        for _ in range(dataset_size // batch):
+            sess.run(e_step, train_dict)
 
         for i in tqdm(range(100000)):
             # Switch between E-step and M-step
             step = e_step if i % 1 == 0 else m_step
 
             # Sometimes generate summaries
-            if i % 50 == 0:
+            if i % 52 == 0:
                 summaries = m_step_summaries if step == m_step else general_summaries
                 _, summary_data = sess.run([step, summaries], train_dict)
                 writer.add_summary(summary_data, global_step=i)
